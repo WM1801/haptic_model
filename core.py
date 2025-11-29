@@ -58,7 +58,7 @@ class HapticSimulation:
         self.state = HapticObjectState(x=0.0)
         self.cursor_x = None  # только X — система 1D
         self.force_threshold = 0.001
-        self.f_max = 50
+        self.f_max = 150
 
     def set_profile(self, **kwargs):
         for k, v in kwargs.items():

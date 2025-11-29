@@ -19,47 +19,56 @@ class ProfileGraph:
         c = self.canvas
         c.delete("all")
 
-        # Дискретизируем профиль
+        # --- 1. Рисуем профиль U(x) ---
         steps = 300
         dx = (self.x_max_view - self.x_min_view) / steps
+        xs = []
         us = []
         for i in range(steps + 1):
             x = self.x_min_view + i * dx
-            us.append(sim.profile.potential(x))
+            u = sim.profile.potential(x)
+            xs.append(x)
+            us.append(u)
 
         u_min, u_max = (min(us), max(us)) if us else (0, 1)
         if u_max == u_min:
             u_max = u_min + 1
 
+        # Преобразуем U в пиксели по Y (инвертируем: большее U → выше на экране)
         points = []
-        for i in range(steps + 1):
-            x = self.x_min_view + i * dx
+        for i in range(len(xs)):
+            x = xs[i]
             u = us[i]
+            # y = y_center - scale * (u_normalized)
             y = self.y_center - self.y_scale * (u - u_min) / (u_max - u_min)
             points.extend([x, y])
 
         if len(points) >= 4:
             c.create_line(points, fill="lightgray", width=2)
 
+        # Горизонтальная линия для ориентира (не обязательно)
         c.create_line(self.x_min_view, self.y_center, self.x_max_view, self.y_center,
-                      fill="gray", dash=(2, 2))
+                    fill="gray", dash=(2, 2))
 
-        # Объект
+        # --- 2. ОБЪЕКТ: рисуем НА ПОВЕРХНОСТИ U(x) ---
         obj_x = sim.state.x
-        c.create_oval(obj_x - 6, self.y_center - 6, obj_x + 6, self.y_center + 6, fill="red")
+        u_obj = sim.profile.potential(obj_x)
+        obj_y = self.y_center - self.y_scale * (u_obj - u_min) / (u_max - u_min)
 
-        # "Резинка" к курсору
+        c.create_oval(obj_x - 6, obj_y - 6, obj_x + 6, obj_y + 6, fill="red")
+
+        # --- 3. "Резинка" к курсору ---
         if cursor_pos is not None and sim.state.dragging:
             cx, cy = cursor_pos
-            c.create_line(obj_x, self.y_center, cx, cy,
-                          fill="orange", width=2, dash=(4, 2))
+            c.create_line(obj_x, obj_y, cx, cy,
+                        fill="orange", width=2, dash=(4, 2))
             c.create_oval(cx - 4, cy - 4, cx + 4, cy + 4, outline="orange", width=1)
 
-        # Текст
+        # --- 4. Текст ---
         typ = "Ямка" if sim.profile.is_pit else "Горка"
         F = sim.get_current_force()
         c.create_text(300, 20, text=f"Профиль: {typ} | x={obj_x:.1f} | F={F:+.1f}",
-                      font=("Arial", 12))
+                    font=("Arial", 12))
 
 
 class ForceHistoryGraph:
