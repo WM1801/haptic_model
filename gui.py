@@ -1,0 +1,214 @@
+# -------------------------------------------------
+# GUI: зависит от tkinter, НЕ зависит от логики
+# -------------------------------------------------
+try:
+    import tkinter as tk
+except ImportError:
+    raise ImportError("Требуется tkinter для запуска GUI")
+
+
+class ProfileGraph:
+    def __init__(self, canvas, x_min_view, x_max_view, y_center=250, y_scale=80):
+        self.canvas = canvas
+        self.x_min_view = x_min_view
+        self.x_max_view = x_max_view
+        self.y_center = y_center
+        self.y_scale = y_scale
+
+    def draw(self, sim: 'HapticSimulation', cursor_pos=None):
+        c = self.canvas
+        c.delete("all")
+
+        # Дискретизируем профиль
+        steps = 300
+        dx = (self.x_max_view - self.x_min_view) / steps
+        us = []
+        for i in range(steps + 1):
+            x = self.x_min_view + i * dx
+            us.append(sim.profile.potential(x))
+
+        u_min, u_max = (min(us), max(us)) if us else (0, 1)
+        if u_max == u_min:
+            u_max = u_min + 1
+
+        points = []
+        for i in range(steps + 1):
+            x = self.x_min_view + i * dx
+            u = us[i]
+            y = self.y_center - self.y_scale * (u - u_min) / (u_max - u_min)
+            points.extend([x, y])
+
+        if len(points) >= 4:
+            c.create_line(points, fill="lightgray", width=2)
+
+        c.create_line(self.x_min_view, self.y_center, self.x_max_view, self.y_center,
+                      fill="gray", dash=(2, 2))
+
+        # Объект
+        obj_x = sim.state.x
+        c.create_oval(obj_x - 6, self.y_center - 6, obj_x + 6, self.y_center + 6, fill="red")
+
+        # "Резинка" к курсору
+        if cursor_pos is not None and sim.state.dragging:
+            cx, cy = cursor_pos
+            c.create_line(obj_x, self.y_center, cx, cy,
+                          fill="orange", width=2, dash=(4, 2))
+            c.create_oval(cx - 4, cy - 4, cx + 4, cy + 4, outline="orange", width=1)
+
+        # Текст
+        typ = "Ямка" if sim.profile.is_pit else "Горка"
+        F = sim.get_current_force()
+        c.create_text(300, 20, text=f"Профиль: {typ} | x={obj_x:.1f} | F={F:+.1f}",
+                      font=("Arial", 12))
+
+
+class ForceHistoryGraph:
+    def __init__(self, canvas, max_points=300):
+        self.canvas = canvas
+        self.max_points = max_points
+        self.history = []
+
+    def add(self, F):
+        self.history.append(F)
+        if len(self.history) > self.max_points:
+            self.history.pop(0)
+
+    def draw(self):
+        c = self.canvas
+        c.delete("all")
+        if not self.history:
+            return
+
+        w = c.winfo_width()
+        h = c.winfo_height()
+        F_max_abs = max(max(abs(f) for f in self.history), 0.1)
+        y0 = h / 2
+
+        points = []
+        N = len(self.history)
+        for i, F in enumerate(self.history):
+            x = i * (w / N)
+            y = y0 - (F / F_max_abs) * (h / 2)
+            points.extend([x, y])
+
+        if len(points) >= 4:
+            c.create_line(points, fill="blue", width=2)
+
+        c.create_line(0, y0, w, y0, fill="black", dash=(2, 2))
+        c.create_text(50, 20, text=f"F = {self.history[-1]:+.1f}", anchor="w", font=("Arial", 10))
+
+
+class DualForceGraph:
+    def __init__(self, canvas, max_points=300):
+        self.canvas = canvas
+        self.max_points = max_points
+        self.history_haptic = []
+        self.history_external = []
+
+    def add(self, F_haptic, F_external):
+        self.history_haptic.append(F_haptic)
+        self.history_external.append(F_external)
+        if len(self.history_haptic) > self.max_points:
+            self.history_haptic.pop(0)
+            self.history_external.pop(0)
+
+    def draw(self):
+        c = self.canvas
+        c.delete("all")
+        
+        if not self.history_haptic:
+            return
+
+        w = c.winfo_width()
+        h = c.winfo_height()
+        
+        # Общий масштаб по Y: используем общий диапазон обеих сил
+        all_forces = self.history_haptic + self.history_external
+        F_max_abs = max(max(abs(f) for f in all_forces), 0.1)
+        y0 = h / 2
+
+        # Рисуем гаптическую силу (синяя)
+        points_haptic = []
+        N = len(self.history_haptic)
+        for i, F in enumerate(self.history_haptic):
+            x = i * (w / N)
+            y = y0 - (F / F_max_abs) * (h / 2)
+            points_haptic.extend([x, y])
+        if len(points_haptic) >= 4:
+            c.create_line(points_haptic, fill="blue", width=2)
+
+        # Рисуем внешнюю силу (красная)
+        points_external = []
+        for i, F in enumerate(self.history_external):
+            x = i * (w / N)
+            y = y0 - (F / F_max_abs) * (h / 2)
+            points_external.extend([x, y])
+        if len(points_external) >= 4:
+            c.create_line(points_external, fill="red", width=2)
+
+        # Линия F = 0
+        c.create_line(0, y0, w, y0, fill="black", dash=(2, 2))
+
+        # Легенда
+        c.create_text(50, 20, text=f"F_haptic = {self.history_haptic[-1]:+.1f}", anchor="w", fill="blue", font=("Arial", 10))
+        c.create_text(50, 40, text=f"F_mouse   = {self.history_external[-1]:+.1f}", anchor="w", fill="red", font=("Arial", 10))
+        c.create_text(w - 50, h - 10, text="время →", anchor="e", font=("Arial", 9))
+
+
+class HapticGUI:
+    def __init__(self, sim: 'HapticSimulation'):
+        self.sim = sim
+        self.root = tk.Tk()
+        self.root.title("Гаптическая симуляция — с 'резинкой'")
+        self.cursor_pos = None  # (x, y) — только для отрисовки
+
+        # Холсты
+        self.profile_canvas = tk.Canvas(self.root, width=600, height=300, bg="white")
+        self.profile_canvas.pack()
+        self.profile_graph = ProfileGraph(
+            self.profile_canvas,
+            x_min_view=sim.x_min,
+            x_max_view=sim.x_max
+        )
+
+        self.force_canvas = tk.Canvas(self.root, width=600, height=150, bg="#f0f0f0")
+        self.force_canvas.pack()
+        self.force_graph = DualForceGraph(self.force_canvas)
+
+        # Кнопка
+        self.btn = tk.Button(self.root, text="Переключить: Горка ↔ Ямка",
+                             command=sim.toggle_profile_type)
+        self.btn.pack()
+
+        # Привязка мыши
+        self.profile_canvas.bind("<Button-1>", self.on_mouse_down)
+        self.profile_canvas.bind("<B1-Motion>", self.on_mouse_move)
+        self.profile_canvas.bind("<ButtonRelease-1>", self.on_mouse_up)
+
+        self.animate()
+
+    def on_mouse_down(self, event):
+        if abs(event.x - self.sim.state.x) <= 10:
+            self.sim.state.dragging = True
+            self.cursor_pos = (event.x, event.y)
+            self.sim.cursor_x = float(event.x)
+
+    def on_mouse_move(self, event):
+        if self.sim.state.dragging:
+            self.cursor_pos = (event.x, event.y)
+            self.sim.cursor_x = float(event.x)  # ✅ правильно: cursor_x
+
+    def on_mouse_up(self, event):
+        self.sim.state.dragging = False
+        self.cursor_pos = None
+        self.sim.cursor_x = None  # ✅ правильно: cursor_x
+
+    def animate(self):
+        F_haptic, F_ext = self.sim.step()
+        self.force_graph.add(F_haptic, F_ext)
+        self.profile_graph.draw(self.sim, self.cursor_pos)
+        self.force_graph.draw()
+        self.root.after(int(self.sim.dt * 1000), self.animate)
+
+    def run(self):
+        self.root.mainloop()
