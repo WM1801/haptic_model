@@ -52,11 +52,13 @@ class HapticSimulation:
         self.mass = mass
         self.damping = damping
         self.dt = 0.01
-        self.drag_spring_k = 20.0  # жёсткость "резинки"
+        self.drag_spring_k = 0.1 # жёсткость "резинки"
 
         self.profile = HapticProfile()
         self.state = HapticObjectState(x=0.0)
         self.cursor_x = None  # только X — система 1D
+        self.force_threshold = 0.001
+        self.f_max = 50
 
     def set_profile(self, **kwargs):
         for k, v in kwargs.items():
@@ -70,7 +72,17 @@ class HapticSimulation:
         """Один шаг симуляции — всегда работает"""
         external = 0.0
         if self.state.dragging and self.cursor_x is not None:
-            external = self.drag_spring_k * (self.cursor_x - self.state.x)
+            # виртуальное усилие от мышь -> сила 
+            raw_force = self.drag_spring_k * (self.cursor_x - self.state.x)
+            
+            #порог срабатывния (мертвая зона)
+            if abs(raw_force) < self.force_threshold: 
+                external = 0.0
+            else: 
+                #ограничение максимума 
+                external = max(-self.f_max, min (self.f_max, raw_force))
+        else: 
+            external = 0.0
 
         F_haptic = self.profile.force(self.state.x)
         F_total = F_haptic + external
