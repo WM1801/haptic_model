@@ -118,6 +118,8 @@ class HapticSimulation:
         self.cursor_x = None  # только X — система 1D
         self.force_threshold = 1.001
         self.f_max = 150
+        #---порог для скорости ---
+        self.vx_threshold = 0.01
 
     def set_profile(self, profile):
         #принимает объект PiecewiseProfile
@@ -148,13 +150,14 @@ class HapticSimulation:
             external = 0.0
 
         F_haptic = self.profile.force(self.state.x)
+
         friction_force = 0.0
-        if (abs(external) > self.constant_force):
-            #Если внешняя сила преодолевает сопротивление, сила сопротивления направлена против
-            friction_force = -self.constant_force * (1 if external > 0 else -1)
-        else: 
-            # Если внешней силы недостаточно, сила сопротивления полностью компенсирует её
-            friction_force = -external
+        if self.state.vx > 0:
+            friction_force = -self.constant_force
+        elif self.state.vx < 0: 
+            friction_force = self.constant_force
+        else: #vx == 0
+            friction_force = 0
 
         # --- ИСПРАВЛЕНО: постоянная сила (трение) добавляется как friction_force ---
         F_total = F_haptic + external + friction_force
@@ -162,6 +165,10 @@ class HapticSimulation:
         a = F_total / self.mass - self.damping * self.state.vx / self.mass
         self.state.vx += a * self.dt
         self.state.x += self.state.vx * self.dt
+
+        #установка скорости в 0, если она ниже порога ---
+        if abs(self.state.vx) < self.vx_threshold:
+            self.state.vx = 0.0
 
         # Ограничение диапазона
         if self.state.x < self.x_min:
