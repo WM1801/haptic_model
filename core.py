@@ -133,49 +133,60 @@ class HapticSimulation:
         """Устанавливает силу сопротивления (например, трение)"""
         self.constant_force = abs(force)  # всегда положительная величина
 
-    def step(self):
-        """Один шаг симуляции — всегда работает"""
+    def _calculate_external_force(self):
+        """Вычисляет внешнюю силу от пользователя (мышь/тачпад)"""
         external = 0.0
         if self.state.dragging and self.cursor_x is not None:
-            # виртуальное усилие от мышь -> сила 
             raw_force = self.drag_spring_k * (self.cursor_x - self.state.x)
-            
-            #порог срабатывания (мертвая зона)
             if abs(raw_force) < self.force_threshold: 
                 external = 0.0
             else: 
-                #ограничение максимума 
                 external = max(-self.f_max, min (self.f_max, raw_force))
-        else: 
-            external = 0.0
+        return external
 
-        F_haptic = self.profile.force(self.state.x)
-
+    def _calculate_friction_force(self):
+        """Вычисляет силу сухого трения, противоположно направленную скорости"""
         friction_force = 0.0
         if self.state.vx > 0:
             friction_force = -self.constant_force
-        elif self.state.vx < 0: 
+        elif self.state.vx < 0:
             friction_force = self.constant_force
-        else: #vx == 0
-            friction_force = 0
+        return friction_force
 
-        # --- ИСПРАВЛЕНО: постоянная сила (трение) добавляется как friction_force ---
-        F_total = F_haptic + external + friction_force
+    def _calculate_acceleration(self, F_total):
+        """Вычисляет ускорение из суммарной силы"""
+        return F_total / self.mass - self.damping * self.state.vx / self.mass
 
-        a = F_total / self.mass - self.damping * self.state.vx / self.mass
+    def _update_state(self, a):
+        """Обновляет скорость и положение"""
         self.state.vx += a * self.dt
         self.state.x += self.state.vx * self.dt
 
-        #установка скорости в 0, если она ниже порога ---
+    def _apply_velocity_threshold(self):
+        """Применяет порог скорости для стабилизации"""
         if abs(self.state.vx) < self.vx_threshold:
             self.state.vx = 0.0
 
-        # Ограничение диапазона
+    def _apply_position_bounds(self):
+        """Ограничивает положение в пределах x_min, x_max"""
         if self.state.x < self.x_min:
             self.state.x = self.x_min
             self.state.vx = 0.0
         elif self.state.x > self.x_max:
             self.state.x = self.x_max
             self.state.vx = 0.0
+
+    def step(self):
+        """Один шаг симуляции — всегда работает"""
+        external = self._calculate_external_force()
+        F_haptic = self.profile.force(self.state.x)
+        friction_force = self._calculate_friction_force()
+
+        F_total = F_haptic + external + friction_force
+
+        a = self._calculate_acceleration(F_total)
+        self._update_state(a)
+        self._apply_velocity_threshold()
+        self._apply_position_bounds()
 
         return F_haptic, external
