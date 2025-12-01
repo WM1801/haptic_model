@@ -67,7 +67,8 @@ class ProfileGraph:
 
         # --- 4. Текст ---
         F = sim.get_current_force()
-        c.create_text(300, 20, text=f"Профиль: U(x) | x={obj_x:.1f} | F={F:+.1f}",
+        mode = "Impedance" if sim.use_impedance_control else "Standard"
+        c.create_text(300, 20, text=f"Mode: {mode} | x={obj_x:.1f} | F={F:+.1f}",
                     font=("Arial", 12))
 
 
@@ -268,6 +269,14 @@ class HapticGUI:
         self.target_force_graph = TargetForceGraph(self.target_force_canvas)
         # ------------------------------------
 
+        # --- КНОПКА ПЕРЕКЛЮЧЕНИЯ РЕЖИМА ---
+        mode_frame = tk.Frame(self.root)
+        mode_frame.pack()
+
+        self.mode_btn = tk.Button(mode_frame, text="Переключить режим", command=self.toggle_mode)
+        self.mode_btn.pack()
+        # ------------------------------------
+
         # --- ЭЛЕМЕНТЫ УПРАВЛЕНИЯ ДЛЯ ПОЗИЦИОННОГО УПРАВЛЕНИЯ ---
         control_frame = tk.Frame(self.root)
         control_frame.pack()
@@ -318,6 +327,11 @@ class HapticGUI:
         self.profile_canvas.bind("<ButtonRelease-1>", self.on_mouse_up)
 
         self.animate()
+
+    def toggle_mode(self):
+        self.sim.toggle_impedance_control()
+        mode = "Impedance" if self.sim.use_impedance_control else "Standard"
+        print(f"Режим изменён на: {mode}")
 
     def set_target_position(self):
         try:

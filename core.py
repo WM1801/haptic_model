@@ -135,13 +135,27 @@ class HapticSimulation:
         self.target_spring_k = 1.0  # жёсткость пружины к целевой позиции
         self.target_damping = 0.5   # демпфирование для ограничения скорости
         self.target_max_force = 100.0  # максимальная сила привода
+        self.target_force_enabled = True # вкл/выкл пружину
         # ----------------------------------------
 
-        # --- НОВОЕ: параметры для управления по скорости ---
+        # --- параметры для управления по скорости ---
         self.target_speed_x = None
         self.target_max_speed = 10.0
         self.target_zone_width = 50.0
+        self.target_speed_enable = True # вкл/выкл пружину
         # ----------------------------------------------
+
+        # --- параметры Impedance Control ---
+        self.use_impedance_control = False
+        self.impedance_mass = 1.0
+        self.impedance_damping = 0.1
+        self.impedance_stiffness = 0.0  # жёсткость к x_desired (например, от привода)
+        # ---------------------------------------
+
+
+    def set_move_enabled(self, enabled):
+        self.target_force_enabled = enabled 
+        self.target_speed_enable = enabled    
 
     def set_profile(self, profile):
         #принимает объект PiecewiseProfile
@@ -154,6 +168,10 @@ class HapticSimulation:
     def set_constant_force(self, force):
         """Устанавливает силу сопротивления (например, трение)"""
         self.constant_force = abs(force)  # всегда положительная величина
+
+    # --- МЕТОД ДЛЯ ВКЛЮЧЕНИЯ/ВЫКЛЮЧЕНИЯ Impedance Control ---
+    def toggle_impedance_control(self):
+        self.use_impedance_control = not self.use_impedance_control
 
     # --- МЕТОД ДЛЯ УСТАНОВКИ ЦЕЛЕВОЙ ПОЗИЦИИ (ПРУЖИНА) ---
     def set_target_position(self, x):
@@ -181,7 +199,7 @@ class HapticSimulation:
     # --- СИЛА, УПРАВЛЯЕМАЯ ПОЗИЦИОННО (ПРУЖИНА) ---
     def _calculate_target_force(self):
         """Вычисляет силу, стремящуюся переместить объект к target_x с ограничением скорости"""
-        if self.target_x is None:
+        if self.target_x is None or not self.target_force_enabled:
             return 0.0
 
         # Пружина к целевой позиции
@@ -208,7 +226,7 @@ class HapticSimulation:
     # --- сила, управляемая через желаемую скорость ---
     def _calculate_speed_control_force(self):
         """Вычисляет силу, стремящуюся к целевой скорости, основанной на расстоянии до цели"""
-        if self.target_speed_x is None:
+        if self.target_speed_x is None or not self.target_speed_enable:
             return 0.0
 
         # Вычисляем расстояние до цели
@@ -235,7 +253,6 @@ class HapticSimulation:
         speed_force = max(-self.target_max_force, min(self.target_max_force, speed_force))
 
         return speed_force
-    # ---------------------------------------------------------
 
     def _calculate_friction_force(self, F_applied):
         """
@@ -273,25 +290,61 @@ class HapticSimulation:
             self.state.x = self.x_max
             self.state.vx = 0.0
 
-    def step(self):
-        """Один шаг симуляции — всегда работает"""
-        external = self._calculate_external_force()
+    # --- НОВОЕ: Impedance Control ---
+    def _impedance_step(self):
+        """Вычисляет движение по impedance control модели"""
+        # Желаемая позиция (например, от привода)
+        # Используем target_x, если он задан, иначе текущее положение
+        x_desired = self.target_x if self.target_x is not None else self.state.x
+
+        # Внешние силы (профиль, пользователь, трение, привод, скорость)
         F_haptic = self.profile.force(self.state.x)
-        target_force = self._calculate_target_force()  # <-- Сила позиционного управления
-        speed_force = self._calculate_speed_control_force()  # <-- Новая сила по скорости
+        F_external_user = self._calculate_external_force()
+        F_target = self._calculate_target_force()
+        F_speed = self._calculate_speed_control_force()
+        F_total_applied = F_haptic + F_external_user + F_target + F_speed
 
-        # Суммируем все силы, кроме трения
-        F_applied = F_haptic + external + target_force + speed_force
+        # Impedance Control: M * d²x + B * dx + K * (x - x_desired) = F_total_applied
+        # Перепишем как: d²x = (F_total_applied - B * dx - K * (x - x_desired)) / M
+        F_impedance = - self.impedance_damping * self.state.vx - self.impedance_stiffness * (self.state.x - x_desired)
+        F_total = F_total_applied + F_impedance
 
-        # Вычисляем трение на основе F_applied
-        friction_force = self._calculate_friction_force(F_applied)
+        a = F_total / self.impedance_mass
 
-        # Итоговая сила
-        F_total = F_applied + friction_force
+        # Обновляем состояние
+        self.state.vx += a * self.dt
+        self.state.x += self.state.vx * self.dt
 
-        a = self._calculate_acceleration(F_total)
-        self._update_state(a)
+        # Применяем ограничения
         self._apply_velocity_threshold()
         self._apply_position_bounds()
 
-        return F_haptic, external
+        # Возвращаем силы для отладки/отображения (F_haptic, F_external_user)
+        return F_haptic, F_external_user
+    # ---------------------------------
+
+    def step(self):
+        """Один шаг симуляции — всегда работает"""
+        if self.use_impedance_control:
+            return self._impedance_step()
+        else:
+            external = self._calculate_external_force()
+            F_haptic = self.profile.force(self.state.x)
+            target_force = self._calculate_target_force()
+            speed_force = self._calculate_speed_control_force()
+
+            # Суммируем все силы, кроме трения
+            F_applied = F_haptic + external + target_force + speed_force
+
+            # Вычисляем трение на основе F_applied
+            friction_force = self._calculate_friction_force(F_applied)
+
+            # Итоговая сила
+            F_total = F_applied + friction_force
+
+            a = self._calculate_acceleration(F_total)
+            self._update_state(a)
+            self._apply_velocity_threshold()
+            self._apply_position_bounds()
+
+            return F_haptic, external

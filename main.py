@@ -39,7 +39,7 @@ if __name__ == "__main__":
 
     # Применяем профиль
     sim.set_profile(profile)
-
+    sim.toggle_impedance_control() 
     # Запускаем GUI
     app = HapticGUI(sim)
     app.run()
