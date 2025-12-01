@@ -118,7 +118,7 @@ class HapticSimulation:
         self.mass = mass
         self.damping = damping
         self.dt = 0.01
-        self.drag_spring_k = 0.1 # жёсткость "резинки"
+        self.drag_spring_k = 0.1 # жёсткость "резинки" для пользователя
 
         self.constant_force = 0.0  #сухое трение 
 
@@ -129,6 +129,13 @@ class HapticSimulation:
         self.f_max = 150
         #---порог для скорости ---
         self.vx_threshold = 0.01
+
+        # --- НОВОЕ: параметры для силы привода ---
+        self.target_x = None
+        self.target_spring_k = 1.0  # жёсткость пружины к целевой позиции
+        self.target_damping = 0.5   # демпфирование для ограничения скорости
+        self.target_max_force = 100.0  # максимальная сила привода
+        # ----------------------------------------
 
     def set_profile(self, profile):
         #принимает объект PiecewiseProfile
@@ -142,6 +149,11 @@ class HapticSimulation:
         """Устанавливает силу сопротивления (например, трение)"""
         self.constant_force = abs(force)  # всегда положительная величина
 
+    # --- НОВОЕ: метод для установки целевой позиции ---
+    def set_target_position(self, x):
+        """Устанавливает целевую позицию для привода"""
+        self.target_x = x
+
     def _calculate_external_force(self):
         """Вычисляет внешнюю силу от пользователя (мышь/тачпад)"""
         external = 0.0
@@ -153,9 +165,37 @@ class HapticSimulation:
                 external = max(-self.f_max, min (self.f_max, raw_force))
         return external
 
+    # --- сила, стремящаяся к target_x с ограничением скорости ---
+    def _calculate_target_force(self):
+        """Вычисляет силу, стремящуюся переместить объект к target_x с ограничением скорости"""
+        if self.target_x is None:
+            return 0.0
+
+        # Пружина к целевой позиции
+        spring_force = self.target_spring_k * (self.target_x - self.state.x)
+
+        # Демпфирование для ограничения скорости (против текущей скорости)
+        damping_force = -self.target_damping * self.state.vx
+
+        raw_force = spring_force + damping_force
+
+        # --- компенсация трения ---
+        # Если raw_force направлена к цели и недостаточна, добавим "запас"
+        direction_to_target = 1 if self.target_x > self.state.x else -1
+        if abs(raw_force) < self.constant_force and raw_force * direction_to_target > 0:
+            # raw_force направлена к цели, но слаба, увеличим её
+            raw_force = direction_to_target * self.constant_force
+        # -----------------------------------
+
+        # Ограничиваем максимальную силу
+        target_force = max(-self.target_max_force, min(self.target_max_force, raw_force))
+
+        return target_force
+    # ---------------------------------------------------------
+
     def _calculate_friction_force(self, F_applied):
         """
-        F_applied: сумма всех других сил (F_haptic + external).
+        F_applied: сумма всех других сил (F_haptic + external + target).
         Если |F_applied| < constant_force, трение полностью компенсирует F_applied.
         Иначе, трение = -sign(F_applied) * constant_force.
         """
@@ -193,11 +233,15 @@ class HapticSimulation:
         """Один шаг симуляции — всегда работает"""
         external = self._calculate_external_force()
         F_haptic = self.profile.force(self.state.x)
+        target_force = self._calculate_target_force()  # <-- Новая сила
 
-        # Сначала вычисляем силу трения на основе F_applied
-        F_applied = F_haptic + external
+        # Суммируем все силы, кроме трения
+        F_applied = F_haptic + external + target_force
+
+        # Вычисляем трение на основе F_applied
         friction_force = self._calculate_friction_force(F_applied)
 
+        # Итоговая сила
         F_total = F_applied + friction_force
 
         a = self._calculate_acceleration(F_total)

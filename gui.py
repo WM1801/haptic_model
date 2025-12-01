@@ -200,6 +200,44 @@ class VelocityGraph:
         c.create_text(50, 20, text=f"V = {self.history[-1]:+.2f}", anchor="w", font=("Arial", 10), fill="green")
 
 
+# --- НОВОЕ: график для силы привода ---
+class TargetForceGraph:
+    def __init__(self, canvas, max_points=300):
+        self.canvas = canvas
+        self.max_points = max_points
+        self.history = []
+
+    def add(self, F_target):
+        self.history.append(F_target)
+        if len(self.history) > self.max_points:
+            self.history.pop(0)
+
+    def draw(self):
+        c = self.canvas
+        c.delete("all")
+        if not self.history:
+            return
+
+        w = c.winfo_width()
+        h = c.winfo_height()
+        F_max_abs = max(max(abs(f) for f in self.history), 0.1)
+        y0 = h / 2
+
+        points = []
+        N = len(self.history)
+        for i, F in enumerate(self.history):
+            x = i * (w / N)
+            y = y0 - (F / F_max_abs) * (h / 2)
+            points.extend([x, y])
+
+        if len(points) >= 4:
+            c.create_line(points, fill="purple", width=2)  # Цвет для силы привода
+
+        c.create_line(0, y0, w, y0, fill="black", dash=(2, 2))
+        c.create_text(50, 20, text=f"F_target = {self.history[-1]:+.1f}", anchor="w", fill="purple", font=("Arial", 10))
+# ------------------------------------
+
+
 class HapticGUI:
     def __init__(self, sim: 'HapticSimulation'):
         self.sim = sim
@@ -224,9 +262,32 @@ class HapticGUI:
         self.velocity_canvas.pack()
         self.velocity_graph = VelocityGraph(self.velocity_canvas)
 
-        # Кнопка
-        #self.btn = tk.Button(self.root, text="Переключить: Горка ↔ Ямка", command=sim.toggle_profile_type)
-        #self.btn.pack()
+        # --- НОВОЕ: график для силы привода ---
+        self.target_force_canvas = tk.Canvas(self.root, width=600, height=150, bg="#f9f9f9")
+        self.target_force_canvas.pack()
+        self.target_force_graph = TargetForceGraph(self.target_force_canvas)
+        # ------------------------------------
+
+        # --- НОВОЕ: элементы управления для целевой позиции и скорости ---
+        control_frame = tk.Frame(self.root)
+        control_frame.pack()
+
+        tk.Label(control_frame, text="Целевая позиция:").pack(side=tk.LEFT)
+        self.target_entry = tk.Entry(control_frame, width=10)
+        self.target_entry.pack(side=tk.LEFT)
+        self.target_entry.insert(0, "0.0")  # Значение по умолчанию
+
+        self.set_target_btn = tk.Button(control_frame, text="Установить позицию", command=self.set_target_position)
+        self.set_target_btn.pack(side=tk.LEFT)
+
+        tk.Label(control_frame, text="Ограничение скорости (damping):").pack(side=tk.LEFT)
+        self.damping_entry = tk.Entry(control_frame, width=10)
+        self.damping_entry.pack(side=tk.LEFT)
+        self.damping_entry.insert(0, str(self.sim.target_damping))  # Текущее значение
+
+        self.set_damping_btn = tk.Button(control_frame, text="Установить", command=self.set_damping)
+        self.set_damping_btn.pack(side=tk.LEFT)
+        # -----------------------------------------------------------------
 
         # Привязка мыши
         self.profile_canvas.bind("<Button-1>", self.on_mouse_down)
@@ -234,6 +295,20 @@ class HapticGUI:
         self.profile_canvas.bind("<ButtonRelease-1>", self.on_mouse_up)
 
         self.animate()
+
+    def set_target_position(self):
+        try:
+            target_x = float(self.target_entry.get())
+            self.sim.set_target_position(target_x)
+        except ValueError:
+            print("Некорректное значение для целевой позиции")
+
+    def set_damping(self):
+        try:
+            damping = float(self.damping_entry.get())
+            self.sim.target_damping = damping
+        except ValueError:
+            print("Некорректное значение для демпфирования")
 
     def on_mouse_down(self, event):
         if abs(event.x - self.sim.state.x) <= 10:
@@ -253,11 +328,16 @@ class HapticGUI:
 
     def animate(self):
         F_haptic, F_ext = self.sim.step()
+        # --- НОВОЕ: получаем и добавляем силу привода ---
+        F_target = self.sim._calculate_target_force()
+        self.target_force_graph.add(F_target)
+        # -----------------------------------------------
         self.velocity_graph.add(self.sim.state.vx)
         self.force_graph.add(F_haptic, F_ext)
         self.profile_graph.draw(self.sim, self.cursor_pos)
         self.force_graph.draw()
         self.velocity_graph.draw()
+        self.target_force_graph.draw()  # <-- НОВОЕ: отрисовка
         self.root.after(int(self.sim.dt * 1000), self.animate)
 
     def run(self):
