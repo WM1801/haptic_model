@@ -268,11 +268,11 @@ class HapticGUI:
         self.target_force_graph = TargetForceGraph(self.target_force_canvas)
         # ------------------------------------
 
-        # --- НОВОЕ: элементы управления для целевой позиции и скорости ---
+        # --- ЭЛЕМЕНТЫ УПРАВЛЕНИЯ ДЛЯ ПОЗИЦИОННОГО УПРАВЛЕНИЯ ---
         control_frame = tk.Frame(self.root)
         control_frame.pack()
 
-        tk.Label(control_frame, text="Целевая позиция:").pack(side=tk.LEFT)
+        tk.Label(control_frame, text="Целевая позиция (пружина):").pack(side=tk.LEFT)
         self.target_entry = tk.Entry(control_frame, width=10)
         self.target_entry.pack(side=tk.LEFT)
         self.target_entry.insert(0, "0.0")  # Значение по умолчанию
@@ -280,13 +280,36 @@ class HapticGUI:
         self.set_target_btn = tk.Button(control_frame, text="Установить позицию", command=self.set_target_position)
         self.set_target_btn.pack(side=tk.LEFT)
 
-        tk.Label(control_frame, text="Ограничение скорости (damping):").pack(side=tk.LEFT)
+        tk.Label(control_frame, text="Damping:").pack(side=tk.LEFT)
         self.damping_entry = tk.Entry(control_frame, width=10)
         self.damping_entry.pack(side=tk.LEFT)
         self.damping_entry.insert(0, str(self.sim.target_damping))  # Текущее значение
 
         self.set_damping_btn = tk.Button(control_frame, text="Установить", command=self.set_damping)
         self.set_damping_btn.pack(side=tk.LEFT)
+        # -----------------------------------------------------------------
+
+        # --- НОВОЕ: элементы управления для скоростного управления ---
+        speed_control_frame = tk.Frame(self.root)
+        speed_control_frame.pack()
+
+        tk.Label(speed_control_frame, text="Цель (скоростное):").pack(side=tk.LEFT)
+        self.target_speed_entry = tk.Entry(speed_control_frame, width=10)
+        self.target_speed_entry.pack(side=tk.LEFT)
+        self.target_speed_entry.insert(0, "0.0")
+
+        tk.Label(speed_control_frame, text="Max Speed:").pack(side=tk.LEFT)
+        self.max_speed_entry = tk.Entry(speed_control_frame, width=10)
+        self.max_speed_entry.pack(side=tk.LEFT)
+        self.max_speed_entry.insert(0, "10.0")
+
+        tk.Label(speed_control_frame, text="Zone Width:").pack(side=tk.LEFT)
+        self.zone_width_entry = tk.Entry(speed_control_frame, width=10)
+        self.zone_width_entry.pack(side=tk.LEFT)
+        self.zone_width_entry.insert(0, "50.0")
+
+        self.set_speed_target_btn = tk.Button(speed_control_frame, text="Уст. скорость", command=self.set_speed_target_position)
+        self.set_speed_target_btn.pack(side=tk.LEFT)
         # -----------------------------------------------------------------
 
         # Привязка мыши
@@ -310,6 +333,15 @@ class HapticGUI:
         except ValueError:
             print("Некорректное значение для демпфирования")
 
+    def set_speed_target_position(self):
+        try:
+            x = float(self.target_speed_entry.get())
+            max_speed = float(self.max_speed_entry.get())
+            zone_width = float(self.zone_width_entry.get())
+            self.sim.set_target_position_speed_control(x, max_speed, zone_width)
+        except ValueError:
+            print("Некорректное значение для скоростного управления")
+
     def on_mouse_down(self, event):
         if abs(event.x - self.sim.state.x) <= 10:
             self.sim.state.dragging = True
@@ -330,7 +362,9 @@ class HapticGUI:
         F_haptic, F_ext = self.sim.step()
         # --- НОВОЕ: получаем и добавляем силу привода ---
         F_target = self.sim._calculate_target_force()
-        self.target_force_graph.add(F_target)
+        F_speed = self.sim._calculate_speed_control_force()
+        # Общая сила привода для отображения (можно выбрать одну или сумму)
+        self.target_force_graph.add(F_target + F_speed)  # или только F_target, или F_speed
         # -----------------------------------------------
         self.velocity_graph.add(self.sim.state.vx)
         self.force_graph.add(F_haptic, F_ext)
