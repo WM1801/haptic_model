@@ -1,8 +1,8 @@
 #main.py
 
-from core import HapticSimulation
+from core import HapticSimulation, PiecewiseProfile, constant, linear, trapezoid, semicircle, sine_wave_sum
 from gui import HapticGUI
-
+import math
 
 
 # -------------------------------------------------
@@ -16,7 +16,22 @@ if __name__ == "__main__":
         mass=5.0,
         damping=2.0
     )
-    sim.set_profile(x0=300, width=100, slope_w=30, strength=500, is_pit=False)
+
+    # Установим постоянную силу (например, сопротивление движению)
+    sim.set_constant_force(10.0)
+
+    #Создаем профиль 
+    profile = PiecewiseProfile()
+    # Пример: добавим трапецию и синусоиду
+    profile.add_function(constant, b=0.0)
+    #profile.add_function(trapezoid, x0=300, height=500, base_a=100, base_b=30, is_pit=False)
+    #profile.add_function(sine_wave_sum, components=[
+    #    {'amplitude': 5.0, 'frequency': 0.2, 'phase': 0},
+    #    {'amplitude': 2.0, 'frequency': 0.5, 'phase': math.pi / 4}
+    #])
+
+    # Применяем профиль
+    sim.set_profile(profile)
 
     # Запускаем GUI
     app = HapticGUI(sim)

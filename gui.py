@@ -66,9 +66,8 @@ class ProfileGraph:
             c.create_oval(cx - 4, cy - 4, cx + 4, cy + 4, outline="orange", width=1)
 
         # --- 4. Текст ---
-        typ = "Ямка" if sim.profile.is_pit else "Горка"
         F = sim.get_current_force()
-        c.create_text(300, 20, text=f"Профиль: {typ} | x={obj_x:.1f} | F={F:+.1f}",
+        c.create_text(300, 20, text=f"Профиль: U(x) | x={obj_x:.1f} | F={F:+.1f}",
                     font=("Arial", 12))
 
 
@@ -226,9 +225,8 @@ class HapticGUI:
         self.velocity_graph = VelocityGraph(self.velocity_canvas)
 
         # Кнопка
-        self.btn = tk.Button(self.root, text="Переключить: Горка ↔ Ямка",
-                             command=sim.toggle_profile_type)
-        self.btn.pack()
+        #self.btn = tk.Button(self.root, text="Переключить: Горка ↔ Ямка", command=sim.toggle_profile_type)
+        #self.btn.pack()
 
         # Привязка мыши
         self.profile_canvas.bind("<Button-1>", self.on_mouse_down)
