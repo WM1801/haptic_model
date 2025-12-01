@@ -18,14 +18,14 @@ if __name__ == "__main__":
     )
 
     # Установим постоянную силу (например, сопротивление движению)
-    sim.set_constant_force(9.0)
+    sim.set_constant_force(2.0)
 
     #Создаем профиль 
     profile = PiecewiseProfile()
     # Пример: добавим трапецию и синусоиду
     profile.add_function(constant, b=0.0, override=False)
     profile.add_function(semicircle, x0=100, radius=10, is_pit=False, override=True)
-    profile.add_function(trapezoid, x0=300, height=20, base_a=100, base_b=10, is_pit=False, override=False)
+    profile.add_function(trapezoid, x0=300, height=200, base_a=100, base_b=100, is_pit=False, override=False)
     #profile.add_function(sine_wave_sum, components=[
     #    {'amplitude': 1.0, 'frequency': 0.2, 'phase': 0},
     #    {'amplitude': 0.5, 'frequency': 0.5, 'phase': math.pi / 4}

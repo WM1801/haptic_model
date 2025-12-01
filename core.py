@@ -128,42 +128,42 @@ class HapticSimulation:
         self.force_threshold = 1.001
         self.f_max = 150
         #---порог для скорости ---
-        self.vx_threshold = 0.01
+        self.vx_threshold = 0.1
 
         # --- ПАРАМЕТРЫ ДЛЯ СИЛЫ ПРУЖИНЫ К ЦЕЛИ ---
         self.target_x = None
         self.target_spring_k = 1.0  # жёсткость пружины к целевой позиции
         self.target_damping = 0.5   # демпфирование для ограничения скорости
         self.target_max_force = 100.0  # максимальная сила привода
-        self.target_force_enabled = True # вкл/выкл пружину
         # ----------------------------------------
 
-        # --- параметры для управления по скорости ---
+        # --- НОВОЕ: параметры для управления по скорости ---
         self.target_speed_x = None
         self.target_max_speed = 10.0
         self.target_zone_width = 50.0
-        self.target_speed_enable = True # вкл/выкл пружину
         # ----------------------------------------------
 
-        # --- параметры Impedance Control ---
+        # --- НОВОЕ: параметры Impedance Control ---
         self.use_impedance_control = False
         self.impedance_mass = 1.0
         self.impedance_damping = 0.1
         self.impedance_stiffness = 0.0  # жёсткость к x_desired (например, от привода)
         # ---------------------------------------
 
-
-    def set_move_enabled(self, enabled):
-        self.target_force_enabled = enabled 
-        self.target_speed_enable = enabled    
+        # --- НОВОЕ: флаги для переключения режимов управления ---
+        self.use_target_control = False
+        self.use_speed_control = False
+        # ---------------------------------------------------------
 
     def set_profile(self, profile):
         #принимает объект PiecewiseProfile
         self.profile = profile
 
     def get_current_force(self):
-        # Теперь не включает постоянную силу
-        return self.profile.force(self.state.x)
+        # Теперь включает силу от профиля и силу трения
+        F_profile = self.profile.force(self.state.x)
+        F_friction = self._calculate_friction_force()
+        return F_profile + F_friction
 
     def set_constant_force(self, force):
         """Устанавливает силу сопротивления (например, трение)"""
@@ -172,6 +172,14 @@ class HapticSimulation:
     # --- МЕТОД ДЛЯ ВКЛЮЧЕНИЯ/ВЫКЛЮЧЕНИЯ Impedance Control ---
     def toggle_impedance_control(self):
         self.use_impedance_control = not self.use_impedance_control
+
+    # --- НОВОЕ: методы для включения/выключения режимов управления ---
+    def toggle_target_control(self):
+        self.use_target_control = not self.use_target_control
+
+    def toggle_speed_control(self):
+        self.use_speed_control = not self.use_speed_control
+    # ---------------------------------------------------------
 
     # --- МЕТОД ДЛЯ УСТАНОВКИ ЦЕЛЕВОЙ ПОЗИЦИИ (ПРУЖИНА) ---
     def set_target_position(self, x):
@@ -199,7 +207,7 @@ class HapticSimulation:
     # --- СИЛА, УПРАВЛЯЕМАЯ ПОЗИЦИОННО (ПРУЖИНА) ---
     def _calculate_target_force(self):
         """Вычисляет силу, стремящуюся переместить объект к target_x с ограничением скорости"""
-        if self.target_x is None or not self.target_force_enabled:
+        if self.target_x is None or not self.use_target_control:
             return 0.0
 
         # Пружина к целевой позиции
@@ -223,10 +231,10 @@ class HapticSimulation:
 
         return target_force
 
-    # --- сила, управляемая через желаемую скорость ---
+    # --- НОВОЕ: сила, управляемая через желаемую скорость ---
     def _calculate_speed_control_force(self):
         """Вычисляет силу, стремящуюся к целевой скорости, основанной на расстоянии до цели"""
-        if self.target_speed_x is None or not self.target_speed_enable:
+        if self.target_speed_x is None or not self.use_speed_control:
             return 0.0
 
         # Вычисляем расстояние до цели
@@ -254,18 +262,23 @@ class HapticSimulation:
 
         return speed_force
 
-    def _calculate_friction_force(self, F_applied):
+    # ---  сухое трение зависит от скорости и порога ---
+    def _calculate_friction_force(self):
         """
-        F_applied: сумма всех других сил (F_haptic + external + target + speed_control).
-        Если |F_applied| < constant_force, трение полностью компенсирует F_applied.
-        Иначе, трение = -sign(F_applied) * constant_force.
+        Возвращает силу сухого трения, противоположно направленную скорости.
+        F_friction = -sign(vx) * constant_force, если |vx| >= vx_threshold.
+        Иначе 0.
         """
-        if abs(F_applied) < self.constant_force:
-            # Трение компенсирует внешнюю силу -> объект не движется
-            return -F_applied
+        if abs(self.state.vx) < self.vx_threshold:
+            return 0.0
+        elif self.state.vx > 0:
+            return -self.constant_force
+        elif self.state.vx < 0:
+            return self.constant_force
         else:
-            # Трение = max сила, противоположная направлению F_applied
-            return -self.constant_force * (1 if F_applied > 0 else -1)
+            return 0.0  # vx == 0
+
+    # ---------------------------------------------------------
 
     def _calculate_acceleration(self, F_total):
         """Вычисляет ускорение из суммарной силы"""
@@ -290,19 +303,22 @@ class HapticSimulation:
             self.state.x = self.x_max
             self.state.vx = 0.0
 
-    # --- НОВОЕ: Impedance Control ---
+    # --- ИЗМЕНЕНО: Impedance Control ---
     def _impedance_step(self):
-        """Вычисляет движение по impedance control модели"""
-        # Желаемая позиция (например, от привода)
-        # Используем target_x, если он задан, иначе текущее положение
         x_desired = self.target_x if self.target_x is not None else self.state.x
-
-        # Внешние силы (профиль, пользователь, трение, привод, скорость)
-        F_haptic = self.profile.force(self.state.x)
+        
+        F_haptic = self.profile.force(self.state.x)  # <-- Только профиль
         F_external_user = self._calculate_external_force()
-        F_target = self._calculate_target_force()
-        F_speed = self._calculate_speed_control_force()
-        F_total_applied = F_haptic + F_external_user + F_target + F_speed
+
+        # --- УСЛОВНОЕ ВКЛЮЧЕНИЕ УПРАВЛЕНИЯ ---
+        F_target = self._calculate_target_force() if self.use_target_control else 0.0
+        F_speed = self._calculate_speed_control_force() if self.use_speed_control else 0.0
+        # -------------------------------------
+
+        friction_force = self._calculate_friction_force()
+
+        # Полная внешняя сила для Impedance Control
+        F_total_applied = F_haptic + F_external_user + friction_force + F_target + F_speed
 
         # Impedance Control: M * d²x + B * dx + K * (x - x_desired) = F_total_applied
         # Перепишем как: d²x = (F_total_applied - B * dx - K * (x - x_desired)) / M
@@ -329,22 +345,23 @@ class HapticSimulation:
             return self._impedance_step()
         else:
             external = self._calculate_external_force()
-            F_haptic = self.profile.force(self.state.x)
-            target_force = self._calculate_target_force()
-            speed_force = self._calculate_speed_control_force()
+            F_haptic = self.profile.force(self.state.x)  # <-- Только профиль
 
-            # Суммируем все силы, кроме трения
-            F_applied = F_haptic + external + target_force + speed_force
+            # --- УСЛОВНОЕ ВКЛЮЧЕНИЕ УПРАВЛЕНИЯ ---
+            F_target = self._calculate_target_force() if self.use_target_control else 0.0
+            F_speed = self._calculate_speed_control_force() if self.use_speed_control else 0.0
+            # -------------------------------------
 
-            # Вычисляем трение на основе F_applied
-            friction_force = self._calculate_friction_force(F_applied)
+            # --- КИНЕТИЧЕСКОЕ ТРЕНИЕ (как и раньше) ---
+            friction_force = self._calculate_friction_force()
+            # -----------------------------------------
 
-            # Итоговая сила
-            F_total = F_applied + friction_force
+            # Суммируем все силы
+            F_total = F_haptic + external + F_target + F_speed + friction_force
 
             a = self._calculate_acceleration(F_total)
             self._update_state(a)
             self._apply_velocity_threshold()
             self._apply_position_bounds()
 
-            return F_haptic, external
+            return F_haptic, external  # <-- Возвращаем только силу профиля

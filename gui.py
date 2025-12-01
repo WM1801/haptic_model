@@ -68,7 +68,8 @@ class ProfileGraph:
         # --- 4. Текст ---
         F = sim.get_current_force()
         mode = "Impedance" if sim.use_impedance_control else "Standard"
-        c.create_text(300, 20, text=f"Mode: {mode} | x={obj_x:.1f} | F={F:+.1f}",
+        control_mode = "Tgt" if sim.use_target_control else ("Spd" if sim.use_speed_control else "None")
+        c.create_text(300, 20, text=f"Mode: {mode} | Ctrl: {control_mode} | x={obj_x:.1f} | F={F:+.1f}",
                     font=("Arial", 12))
 
 
@@ -239,6 +240,44 @@ class TargetForceGraph:
 # ------------------------------------
 
 
+# --- НОВОЕ: график для силы затухания ---
+class DecelerationForceGraph:
+    def __init__(self, canvas, max_points=300):
+        self.canvas = canvas
+        self.max_points = max_points
+        self.history = []
+
+    def add(self, F_decel):
+        self.history.append(F_decel)
+        if len(self.history) > self.max_points:
+            self.history.pop(0)
+
+    def draw(self):
+        c = self.canvas
+        c.delete("all")
+        if not self.history:
+            return
+
+        w = c.winfo_width()
+        h = c.winfo_height()
+        F_max_abs = max(max(abs(f) for f in self.history), 0.1)
+        y0 = h / 2
+
+        points = []
+        N = len(self.history)
+        for i, F in enumerate(self.history):
+            x = i * (w / N)
+            y = y0 - (F / F_max_abs) * (h / 2)
+            points.extend([x, y])
+
+        if len(points) >= 4:
+            c.create_line(points, fill="orange", width=2)  # Цвет для силы затухания
+
+        c.create_line(0, y0, w, y0, fill="black", dash=(2, 2))
+        c.create_text(50, 20, text=f"F_decel = {self.history[-1]:+.1f}", anchor="w", fill="orange", font=("Arial", 10))
+# ------------------------------------
+
+
 class HapticGUI:
     def __init__(self, sim: 'HapticSimulation'):
         self.sim = sim
@@ -269,12 +308,24 @@ class HapticGUI:
         self.target_force_graph = TargetForceGraph(self.target_force_canvas)
         # ------------------------------------
 
-        # --- КНОПКА ПЕРЕКЛЮЧЕНИЯ РЕЖИМА ---
+        # --- НОВОЕ: график для силы затухания ---
+        self.decel_force_canvas = tk.Canvas(self.root, width=600, height=150, bg="#f9f9f9")
+        self.decel_force_canvas.pack()
+        self.decel_force_graph = DecelerationForceGraph(self.decel_force_canvas)
+        # ------------------------------------
+
+        # --- КНОПКИ ПЕРЕКЛЮЧЕНИЯ РЕЖИМОВ ---
         mode_frame = tk.Frame(self.root)
         mode_frame.pack()
 
         self.mode_btn = tk.Button(mode_frame, text="Переключить режим", command=self.toggle_mode)
-        self.mode_btn.pack()
+        self.mode_btn.pack(side=tk.LEFT)
+
+        self.target_ctrl_btn = tk.Button(mode_frame, text="Переключить Target Ctrl", command=self.toggle_target_control)
+        self.target_ctrl_btn.pack(side=tk.LEFT)
+
+        self.speed_ctrl_btn = tk.Button(mode_frame, text="Переключить Speed Ctrl", command=self.toggle_speed_control)
+        self.speed_ctrl_btn.pack(side=tk.LEFT)
         # ------------------------------------
 
         # --- ЭЛЕМЕНТЫ УПРАВЛЕНИЯ ДЛЯ ПОЗИЦИОННОГО УПРАВЛЕНИЯ ---
@@ -333,6 +384,16 @@ class HapticGUI:
         mode = "Impedance" if self.sim.use_impedance_control else "Standard"
         print(f"Режим изменён на: {mode}")
 
+    def toggle_target_control(self):
+        self.sim.toggle_target_control()
+        mode = "ON" if self.sim.use_target_control else "OFF"
+        print(f"Target Control изменён на: {mode}")
+
+    def toggle_speed_control(self):
+        self.sim.toggle_speed_control()
+        mode = "ON" if self.sim.use_speed_control else "OFF"
+        print(f"Speed Control изменён на: {mode}")
+
     def set_target_position(self):
         try:
             target_x = float(self.target_entry.get())
@@ -375,17 +436,23 @@ class HapticGUI:
     def animate(self):
         F_haptic, F_ext = self.sim.step()
         # --- НОВОЕ: получаем и добавляем силу привода ---
-        F_target = self.sim._calculate_target_force()
-        F_speed = self.sim._calculate_speed_control_force()
-        # Общая сила привода для отображения (можно выбрать одну или сумму)
-        self.target_force_graph.add(F_target + F_speed)  # или только F_target, или F_speed
+        F_target = self.sim._calculate_target_force() if self.sim.use_target_control else 0.0
+        F_speed = self.sim._calculate_speed_control_force() if self.sim.use_speed_control else 0.0
+        self.target_force_graph.add(F_target + F_speed)
         # -----------------------------------------------
+
+        # --- ИЗМЕНЕНО: сила затухания теперь это сила трения, зависящая от скорости ---
+        friction_force = self.sim._calculate_friction_force()
+        self.decel_force_graph.add(friction_force)
+        # -------------------------------------------------
+
         self.velocity_graph.add(self.sim.state.vx)
         self.force_graph.add(F_haptic, F_ext)
         self.profile_graph.draw(self.sim, self.cursor_pos)
         self.force_graph.draw()
         self.velocity_graph.draw()
-        self.target_force_graph.draw()  # <-- НОВОЕ: отрисовка
+        self.target_force_graph.draw()
+        self.decel_force_graph.draw()
         self.root.after(int(self.sim.dt * 1000), self.animate)
 
     def run(self):
