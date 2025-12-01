@@ -82,18 +82,27 @@ def sine_wave_sum(x, components=None):
 class PiecewiseProfile: 
     """
     Профиль, состоящий из комбинации базовых функций.
-    Содержит список словарей: {'func': func, 'params': {...}}
+    Содержит список словарей: {'func': func, 'params': {...}, 'override': bool}
+    Если override=True и функция активна (func != 0), то её значение заменяет собой сумму остальных.
     """
     def __init__(self, functions=None):
         self.functions = functions or []
 
-    def add_function(self, func, **params):
-        self.functions.append({'func': func, 'params': params})
+    def add_function(self, func, override=False, **params):
+        self.functions.append({'func': func, 'params': params, 'override': override})
 
     def potential(self, x):
+        override_val = None
         total = 0.0
         for f in self.functions:
-            total += f['func'](x, **f['params'])
+            val = f['func'](x, **f['params'])
+            if f['override'] and val != 0:
+                # Если функция с override и она активна (val != 0), возвращаем только её
+                return val
+            elif not f['override']:
+                total += val
+
+        # Если не было override-функций, возвращаем сумму
         return total
 
     def force(self, x, dx=1e-3):
@@ -144,14 +153,18 @@ class HapticSimulation:
                 external = max(-self.f_max, min (self.f_max, raw_force))
         return external
 
-    def _calculate_friction_force(self):
-        """Вычисляет силу сухого трения, противоположно направленную скорости"""
-        friction_force = 0.0
-        if self.state.vx > 0:
-            friction_force = -self.constant_force
-        elif self.state.vx < 0:
-            friction_force = self.constant_force
-        return friction_force
+    def _calculate_friction_force(self, F_applied):
+        """
+        F_applied: сумма всех других сил (F_haptic + external).
+        Если |F_applied| < constant_force, трение полностью компенсирует F_applied.
+        Иначе, трение = -sign(F_applied) * constant_force.
+        """
+        if abs(F_applied) < self.constant_force:
+            # Трение компенсирует внешнюю силу -> объект не движется
+            return -F_applied
+        else:
+            # Трение = max сила, противоположная направлению F_applied
+            return -self.constant_force * (1 if F_applied > 0 else -1)
 
     def _calculate_acceleration(self, F_total):
         """Вычисляет ускорение из суммарной силы"""
@@ -180,9 +193,12 @@ class HapticSimulation:
         """Один шаг симуляции — всегда работает"""
         external = self._calculate_external_force()
         F_haptic = self.profile.force(self.state.x)
-        friction_force = self._calculate_friction_force()
 
-        F_total = F_haptic + external + friction_force
+        # Сначала вычисляем силу трения на основе F_applied
+        F_applied = F_haptic + external
+        friction_force = self._calculate_friction_force(F_applied)
+
+        F_total = F_applied + friction_force
 
         a = self._calculate_acceleration(F_total)
         self._update_state(a)

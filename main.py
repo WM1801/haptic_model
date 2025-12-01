@@ -23,13 +23,13 @@ if __name__ == "__main__":
     #Создаем профиль 
     profile = PiecewiseProfile()
     # Пример: добавим трапецию и синусоиду
-    profile.add_function(constant, b=0.0)
-    profile.add_function(semicircle, x0=100, radius=10, is_pit=False)
-    profile.add_function(trapezoid, x0=300, height=20, base_a=10, base_b=50, is_pit=False)
-    #profile.add_function(sine_wave_sum, components=[
-    #    {'amplitude': 10.0, 'frequency': 0.2, 'phase': 0},
-    #    {'amplitude': 2.0, 'frequency': 0.5, 'phase': math.pi / 4}
-    #])
+    profile.add_function(constant, b=0.0, override=False)
+    profile.add_function(semicircle, x0=100, radius=10, is_pit=False, override=True)
+    profile.add_function(trapezoid, x0=300, height=20, base_a=100, base_b=10, is_pit=False, override=False)
+    profile.add_function(sine_wave_sum, components=[
+        {'amplitude': 1.0, 'frequency': 0.2, 'phase': 0},
+        {'amplitude': 0.5, 'frequency': 0.5, 'phase': math.pi / 4}
+    ])
     
     #profile.add_function(trapezoid, x0=300, height=500, base_a=100, base_b=30, is_pit=False)
     #profile.add_function(sine_wave_sum, components=[
