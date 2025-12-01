@@ -1,3 +1,4 @@
+#gui.py
 # -------------------------------------------------
 # GUI: зависит от tkinter, НЕ зависит от логики
 # -------------------------------------------------
@@ -164,6 +165,42 @@ class DualForceGraph:
         c.create_text(w - 50, h - 10, text="время →", anchor="e", font=("Arial", 9))
 
 
+class VelocityGraph:
+    def __init__(self, canvas, max_points=300):
+        self.canvas = canvas
+        self.max_points = max_points
+        self.history = []
+
+    def add(self, vx):
+        self.history.append(vx)
+        if len(self.history) > self.max_points:
+            self.history.pop(0)
+
+    def draw(self):
+        c = self.canvas
+        c.delete("all")
+        if not self.history:
+            return
+
+        w = c.winfo_width()
+        h = c.winfo_height()
+        vx_max_abs = max(max(abs(v) for v in self.history), 0.1)
+        y0 = h / 2
+
+        points = []
+        N = len(self.history)
+        for i, vx in enumerate(self.history):
+            x = i * (w / N)
+            y = y0 - (vx / vx_max_abs) * (h / 2)
+            points.extend([x, y])
+
+        if len(points) >= 4:
+            c.create_line(points, fill="green", width=2)
+
+        c.create_line(0, y0, w, y0, fill="black", dash=(2, 2))
+        c.create_text(50, 20, text=f"V = {self.history[-1]:+.2f}", anchor="w", font=("Arial", 10), fill="green")
+
+
 class HapticGUI:
     def __init__(self, sim: 'HapticSimulation'):
         self.sim = sim
@@ -183,6 +220,10 @@ class HapticGUI:
         self.force_canvas = tk.Canvas(self.root, width=600, height=150, bg="#f0f0f0")
         self.force_canvas.pack()
         self.force_graph = DualForceGraph(self.force_canvas)
+
+        self.velocity_canvas = tk.Canvas(self.root, width=600, height=150, bg="#f5f5f5")
+        self.velocity_canvas.pack()
+        self.velocity_graph = VelocityGraph(self.velocity_canvas)
 
         # Кнопка
         self.btn = tk.Button(self.root, text="Переключить: Горка ↔ Ямка",
@@ -214,9 +255,11 @@ class HapticGUI:
 
     def animate(self):
         F_haptic, F_ext = self.sim.step()
+        self.velocity_graph.add(self.sim.state.vx)
         self.force_graph.add(F_haptic, F_ext)
         self.profile_graph.draw(self.sim, self.cursor_pos)
         self.force_graph.draw()
+        self.velocity_graph.draw()
         self.root.after(int(self.sim.dt * 1000), self.animate)
 
     def run(self):

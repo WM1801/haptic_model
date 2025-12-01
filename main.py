@@ -1,3 +1,5 @@
+#main.py
+
 from core import HapticSimulation
 from gui import HapticGUI
 
