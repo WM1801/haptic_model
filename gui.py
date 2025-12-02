@@ -1,7 +1,3 @@
-#gui.py
-# -------------------------------------------------
-# GUI: зависит от tkinter, НЕ зависит от логики
-# -------------------------------------------------
 try:
     import tkinter as tk
     from tkinter import ttk  # Для Scrollbar
@@ -28,7 +24,7 @@ class ProfileGraph:
         us = []
         for i in range(steps + 1):
             x = self.x_min_view + i * dx
-            u = sim.profile.potential(x)
+            u = sim.potential_profile.potential(x)
             xs.append(x)
             us.append(u)
 
@@ -54,7 +50,7 @@ class ProfileGraph:
 
         # --- 2. ОБЪЕКТ: рисуем НА ПОВЕРХНОСТИ U(x) ---
         obj_x = sim.state.x
-        u_obj = sim.profile.potential(obj_x)
+        u_obj = sim.potential_profile.potential(obj_x)
         obj_y = self.y_center - self.y_scale * (u_obj - u_min) / (u_max - u_min)
 
         c.create_oval(obj_x - 6, obj_y - 6, obj_x + 6, obj_y + 6, fill="red")
@@ -72,6 +68,84 @@ class ProfileGraph:
         control_mode = "Tgt" if sim.use_target_control else ("Spd" if sim.use_speed_control else "None")
         c.create_text(300, 20, text=f"Mode: {mode} | Ctrl: {control_mode} | x={obj_x:.1f} | F={F:+.1f}",
                     font=("Arial", 12))
+
+
+# --- НОВОЕ: график силы ---
+class ForceProfileGraph:
+    def __init__(self, canvas, x_min_view, x_max_view, y_center=250, y_scale=80):
+        self.canvas = canvas
+        self.x_min_view = x_min_view
+        self.x_max_view = x_max_view
+        self.y_center = y_center
+        self.y_scale = y_scale
+
+    def draw(self, sim: 'HapticSimulation', cursor_pos=None):
+        c = self.canvas
+        c.delete("all")
+
+        # --- 1. Рисуем профиль F(x) ---
+        steps = 300
+        dx = (self.x_max_view - self.x_min_view) / steps
+        xs = []
+        fs = []
+        for i in range(steps + 1):
+            x = self.x_min_view + i * dx
+            # Проверим, есть ли у sim атрибут force_profile
+            if hasattr(sim, 'force_profile') and sim.force_profile is not None:
+                f = sim.force_profile.force(x)
+            else:
+                f = 0  # Если force_profile не определён, сила = 0
+            xs.append(x)
+            fs.append(f)
+
+        f_min, f_max = (min(fs), max(fs)) if fs else (0, 1)
+        if f_max == f_min:
+            f_max = f_min + 1
+
+        # Преобразуем F в пиксели по Y (инвертируем: большая сила вверх)
+        points = []
+        for i in range(len(xs)):
+            x = xs[i]
+            f = fs[i]
+            # y = y_center - scale * (f_normalized)
+            y = self.y_center - self.y_scale * (f - f_min) / (f_max - f_min)
+            points.extend([x, y])
+
+        if len(points) >= 4:
+            c.create_line(points, fill="lightblue", width=2)
+
+        # Горизонтальная линия для ориентира (F = 0)
+        f_zero_y = self.y_center - self.y_scale * (0 - f_min) / (f_max - f_min)
+        c.create_line(self.x_min_view, f_zero_y, self.x_max_view, f_zero_y,
+                    fill="gray", dash=(2, 2))
+
+        # --- 2. ОБЪЕКТ: рисуем на графике силы ---
+        obj_x = sim.state.x
+        # Найдем силу в точке obj_x
+        if hasattr(sim, 'force_profile') and sim.force_profile is not None:
+            f_obj = sim.force_profile.force(obj_x)
+        else:
+            f_obj = 0
+        obj_y = self.y_center - self.y_scale * (f_obj - f_min) / (f_max - f_min)
+
+        c.create_oval(obj_x - 6, obj_y - 6, obj_x + 6, obj_y + 6, fill="red")
+
+        # --- 3. "Резинка" к курсору ---
+        if cursor_pos is not None and sim.state.dragging:
+            cx, cy = cursor_pos
+            # Найдем силу в точке курсора (если нужно, можно не отображать)
+            # Для простоты, линия будет от текущей позиции объекта к курсору
+            # Предположим, что cy — это Y-координата курсора на том же графике
+            # Но в текущей реализации курсор не привязан к оси Y силы. Оставим как есть.
+            c.create_line(obj_x, obj_y, cx, self.y_center,  # Пример: линия к центру
+                        fill="orange", width=2, dash=(4, 2))
+            c.create_oval(cx - 4, self.y_center - 4, cx + 4, self.y_center + 4, outline="orange", width=1)
+
+        # --- 4. Текст ---
+        F_total = sim.force_profile.force(sim.state.x) if hasattr(sim, 'force_profile') and sim.force_profile is not None else 0
+        c.create_text(300, 20, text=f"F_profile = {F_total:+.1f}",
+                    font=("Arial", 12))
+# ------------------------------------
 
 
 class ForceHistoryGraph:
@@ -405,6 +479,16 @@ class HapticGUI:
             x_max_view=sim.x_max
         )
 
+        # --- НОВОЕ: график силы ---
+        self.force_profile_canvas = tk.Canvas(self.graphs_frame, width=600, height=300, bg="white")
+        self.force_profile_canvas.pack()
+        self.force_profile_graph = ForceProfileGraph(
+            self.force_profile_canvas,
+            x_min_view=sim.x_min,
+            x_max_view=sim.x_max
+        )
+        # ------------------------------------
+
         self.force_canvas = tk.Canvas(self.graphs_frame, width=600, height=150, bg="#f0f0f0")
         self.force_canvas.pack()
         self.force_graph = DualForceGraph(self.force_canvas)
@@ -540,6 +624,10 @@ class HapticGUI:
         self.profile_canvas.bind("<Button-1>", self.on_mouse_down)
         self.profile_canvas.bind("<B1-Motion>", self.on_mouse_move)
         self.profile_canvas.bind("<ButtonRelease-1>", self.on_mouse_up)
+        # НОВОЕ: привязка мыши к графику силы
+        self.force_profile_canvas.bind("<Button-1>", self.on_mouse_down)
+        self.force_profile_canvas.bind("<B1-Motion>", self.on_mouse_move)
+        self.force_profile_canvas.bind("<ButtonRelease-1>", self.on_mouse_up)
 
         self.animate()
 
@@ -608,6 +696,12 @@ class HapticGUI:
     # ------------------------------------
 
     def on_mouse_down(self, event):
+        # Выбираем активный график для захвата (можно уточнить через event.widget)
+        # Для простоты, будем считать, что захват происходит на любом из них
+        # Но лучше проверить, на каком canvas произошло событие
+        # Однако, в текущей реализации, мы просто обновляем cursor_x и ставим dragging
+        # Это может работать не очень точно, если объекты на разных графиках имеют разные координаты
+        # Но если ось X одинакова, то всё ок.
         if abs(event.x - self.sim.state.x) <= 10:
             self.sim.state.dragging = True
             self.cursor_pos = (event.x, event.y)
@@ -675,6 +769,9 @@ class HapticGUI:
         self.velocity_graph.add(self.sim.state.vx)
         self.force_graph.add(F_haptic, F_ext)
         self.profile_graph.draw(self.sim, self.cursor_pos)
+        # --- НОВОЕ: отрисовка профиля силы ---
+        self.force_profile_graph.draw(self.sim, self.cursor_pos)
+        # ------------------------------------
         self.force_graph.draw()
         self.velocity_graph.draw()
         self.target_force_graph.draw()
