@@ -4,6 +4,7 @@
 # -------------------------------------------------
 try:
     import tkinter as tk
+    from tkinter import ttk  # Для Scrollbar
 except ImportError:
     raise ImportError("Требуется tkinter для запуска GUI")
 
@@ -202,7 +203,7 @@ class VelocityGraph:
         c.create_text(50, 20, text=f"V = {self.history[-1]:+.2f}", anchor="w", font=("Arial", 10), fill="green")
 
 
-# --- НОВОЕ: график для силы привода ---
+# --- график для силы привода ---
 class TargetForceGraph:
     def __init__(self, canvas, max_points=300):
         self.canvas = canvas
@@ -240,7 +241,7 @@ class TargetForceGraph:
 # ------------------------------------
 
 
-# --- НОВОЕ: график для силы затухания ---
+# --- график для силы затухания ---
 class DecelerationForceGraph:
     def __init__(self, canvas, max_points=300):
         self.canvas = canvas
@@ -278,15 +279,125 @@ class DecelerationForceGraph:
 # ------------------------------------
 
 
+# --- НОВОЕ: график для статического трения ---
+class StaticFrictionForceGraph:
+    def __init__(self, canvas, max_points=300):
+        self.canvas = canvas
+        self.max_points = max_points
+        self.history = []
+
+    def add(self, F_static):
+        self.history.append(F_static)
+        if len(self.history) > self.max_points:
+            self.history.pop(0)
+
+    def draw(self):
+        c = self.canvas
+        c.delete("all")
+        if not self.history:
+            return
+
+        w = c.winfo_width()
+        h = c.winfo_height()
+        F_max_abs = max(max(abs(f) for f in self.history), 0.1)
+        y0 = h / 2
+
+        points = []
+        N = len(self.history)
+        for i, F in enumerate(self.history):
+            x = i * (w / N)
+            y = y0 - (F / F_max_abs) * (h / 2)
+            points.extend([x, y])
+
+        if len(points) >= 4:
+            c.create_line(points, fill="brown", width=2)  # Цвет для статического трения
+
+        c.create_line(0, y0, w, y0, fill="black", dash=(2, 2))
+        c.create_text(50, 20, text=f"F_static = {self.history[-1]:+.1f}", anchor="w", fill="brown", font=("Arial", 10))
+# ------------------------------------
+
+
+# --- НОВОЕ: график для кинетического трения ---
+class KineticFrictionForceGraph:
+    def __init__(self, canvas, max_points=300):
+        self.canvas = canvas
+        self.max_points = max_points
+        self.history = []
+
+    def add(self, F_kinetic):
+        self.history.append(F_kinetic)
+        if len(self.history) > self.max_points:
+            self.history.pop(0)
+
+    def draw(self):
+        c = self.canvas
+        c.delete("all")
+        if not self.history:
+            return
+
+        w = c.winfo_width()
+        h = c.winfo_height()
+        F_max_abs = max(max(abs(f) for f in self.history), 0.1)
+        y0 = h / 2
+
+        points = []
+        N = len(self.history)
+        for i, F in enumerate(self.history):
+            x = i * (w / N)
+            y = y0 - (F / F_max_abs) * (h / 2)
+            points.extend([x, y])
+
+        if len(points) >= 4:
+            c.create_line(points, fill="blue", width=2)  # Цвет для кинетического трения
+
+        c.create_line(0, y0, w, y0, fill="black", dash=(2, 2))
+        c.create_text(50, 20, text=f"F_kinetic = {self.history[-1]:+.1f}", anchor="w", fill="blue", font=("Arial", 10))
+# ------------------------------------
+
+
 class HapticGUI:
     def __init__(self, sim: 'HapticSimulation'):
         self.sim = sim
         self.root = tk.Tk()
         self.root.title("Гаптическая симуляция — с 'резинкой'")
+
+        # --- ОСНОВНОЕ ОКНО: разделение на левую (графики) и правую (управление) части ---
+        main_frame = tk.Frame(self.root)
+        main_frame.pack(fill=tk.BOTH, expand=True)
+
+        # Левая часть: графики
+        self.graphs_frame = tk.Frame(main_frame)
+        self.graphs_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        # Правая часть: панель управления
+        self.control_frame = tk.Frame(main_frame, width=220, bg="#e0e0e0")
+        self.control_frame.pack(side=tk.RIGHT, fill=tk.Y)
+        self.control_frame.pack_propagate(False)  # Не изменять ширину
+
+        # --- ПРОКРУТКА В ПАНЕЛИ УПРАВЛЕНИЯ ---
+        canvas = tk.Canvas(self.control_frame, bg="#e0e0e0")
+        scrollbar = ttk.Scrollbar(self.control_frame, orient="vertical", command=canvas.yview)
+        self.scrollable_frame = tk.Frame(canvas, bg="#e0e0e0")
+
+        self.scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+
+        # --- УСТАНОВИТЬ ШИРИНУ ОКНА ВНУТРИ CANVAS ---
+        canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw", width=215)  # Указать ширину
+        # ------------------------------------------
+
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        canvas.pack(side="left", fill="both", expand=True, padx=(0, 2))
+        scrollbar.pack(side="right", fill="y")
+        # ------------------------------------
+
         self.cursor_pos = None  # (x, y) — только для отрисовки
 
-        # Холсты
-        self.profile_canvas = tk.Canvas(self.root, width=600, height=300, bg="white")
+        # --- ГРАФИКИ (левая часть) ---
+        self.profile_canvas = tk.Canvas(self.graphs_frame, width=600, height=300, bg="white")
         self.profile_canvas.pack()
         self.profile_graph = ProfileGraph(
             self.profile_canvas,
@@ -294,83 +405,118 @@ class HapticGUI:
             x_max_view=sim.x_max
         )
 
-        self.force_canvas = tk.Canvas(self.root, width=600, height=150, bg="#f0f0f0")
+        self.force_canvas = tk.Canvas(self.graphs_frame, width=600, height=150, bg="#f0f0f0")
         self.force_canvas.pack()
         self.force_graph = DualForceGraph(self.force_canvas)
 
-        self.velocity_canvas = tk.Canvas(self.root, width=600, height=150, bg="#f5f5f5")
+        self.velocity_canvas = tk.Canvas(self.graphs_frame, width=600, height=150, bg="#f5f5f5")
         self.velocity_canvas.pack()
         self.velocity_graph = VelocityGraph(self.velocity_canvas)
 
-        # --- НОВОЕ: график для силы привода ---
-        self.target_force_canvas = tk.Canvas(self.root, width=600, height=150, bg="#f9f9f9")
+        # --- график для силы привода ---
+        self.target_force_canvas = tk.Canvas(self.graphs_frame, width=600, height=150, bg="#f9f9f9")
         self.target_force_canvas.pack()
         self.target_force_graph = TargetForceGraph(self.target_force_canvas)
         # ------------------------------------
 
-        # --- НОВОЕ: график для силы затухания ---
-        self.decel_force_canvas = tk.Canvas(self.root, width=600, height=150, bg="#f9f9f9")
+        # --- график для силы затухания ---
+        self.decel_force_canvas = tk.Canvas(self.graphs_frame, width=600, height=150, bg="#f9f9f9")
         self.decel_force_canvas.pack()
         self.decel_force_graph = DecelerationForceGraph(self.decel_force_canvas)
         # ------------------------------------
 
+        # --- НОВОЕ: график для статического трения ---
+        self.static_friction_canvas = tk.Canvas(self.graphs_frame, width=600, height=150, bg="#f9f9f9")
+        self.static_friction_canvas.pack()
+        self.static_friction_graph = StaticFrictionForceGraph(self.static_friction_canvas)
+        # ------------------------------------
+
+        # --- НОВОЕ: график для кинетического трения ---
+        self.kinetic_friction_canvas = tk.Canvas(self.graphs_frame, width=600, height=150, bg="#f9f9f9")
+        self.kinetic_friction_canvas.pack()
+        self.kinetic_friction_graph = KineticFrictionForceGraph(self.kinetic_friction_canvas)
+        # ------------------------------------
+
+        # --- ЭЛЕМЕНТЫ УПРАВЛЕНИЯ (правая часть) ---
         # --- КНОПКИ ПЕРЕКЛЮЧЕНИЯ РЕЖИМОВ ---
-        mode_frame = tk.Frame(self.root)
-        mode_frame.pack()
+        mode_frame = tk.Frame(self.scrollable_frame, bg="#e0e0e0")
+        mode_frame.pack(pady=5, fill=tk.X)
 
         self.mode_btn = tk.Button(mode_frame, text="Переключить режим", command=self.toggle_mode)
-        self.mode_btn.pack(side=tk.LEFT)
+        self.mode_btn.pack(padx=2)
 
-        self.target_ctrl_btn = tk.Button(mode_frame, text="Переключить Target Ctrl", command=self.toggle_target_control)
-        self.target_ctrl_btn.pack(side=tk.LEFT)
+        self.target_ctrl_btn = tk.Button(mode_frame, text="Target Ctrl", command=self.toggle_target_control)
+        self.target_ctrl_btn.pack(padx=2)
 
-        self.speed_ctrl_btn = tk.Button(mode_frame, text="Переключить Speed Ctrl", command=self.toggle_speed_control)
-        self.speed_ctrl_btn.pack(side=tk.LEFT)
+        self.speed_ctrl_btn = tk.Button(mode_frame, text="Speed Ctrl", command=self.toggle_speed_control)
+        self.speed_ctrl_btn.pack(padx=2)
         # ------------------------------------
 
         # --- ЭЛЕМЕНТЫ УПРАВЛЕНИЯ ДЛЯ ПОЗИЦИОННОГО УПРАВЛЕНИЯ ---
-        control_frame = tk.Frame(self.root)
-        control_frame.pack()
+        control_frame = tk.Frame(self.scrollable_frame, bg="#e0e0e0")
+        control_frame.pack(pady=5, fill=tk.X)
 
-        tk.Label(control_frame, text="Целевая позиция (пружина):").pack(side=tk.LEFT)
+        tk.Label(control_frame, text="Цель (пружина):", bg="#e0e0e0").pack(anchor=tk.W)
         self.target_entry = tk.Entry(control_frame, width=10)
-        self.target_entry.pack(side=tk.LEFT)
-        self.target_entry.insert(0, "0.0")  # Значение по умолчанию
+        self.target_entry.pack()
+        self.target_entry.insert(0, "0.0")
 
-        self.set_target_btn = tk.Button(control_frame, text="Установить позицию", command=self.set_target_position)
-        self.set_target_btn.pack(side=tk.LEFT)
-
-        tk.Label(control_frame, text="Damping:").pack(side=tk.LEFT)
-        self.damping_entry = tk.Entry(control_frame, width=10)
-        self.damping_entry.pack(side=tk.LEFT)
-        self.damping_entry.insert(0, str(self.sim.target_damping))  # Текущее значение
-
-        self.set_damping_btn = tk.Button(control_frame, text="Установить", command=self.set_damping)
-        self.set_damping_btn.pack(side=tk.LEFT)
+        self.set_target_btn = tk.Button(control_frame, text="Уст. позицию", command=self.set_target_position)
+        self.set_target_btn.pack(pady=2)
         # -----------------------------------------------------------------
 
-        # --- НОВОЕ: элементы управления для скоростного управления ---
-        speed_control_frame = tk.Frame(self.root)
-        speed_control_frame.pack()
+        tk.Label(control_frame, text="Damping (tgt):", bg="#e0e0e0").pack(anchor=tk.W)
+        self.damping_entry = tk.Entry(control_frame, width=10)
+        self.damping_entry.pack()
+        self.damping_entry.insert(0, str(self.sim.target_damping))
 
-        tk.Label(speed_control_frame, text="Цель (скоростное):").pack(side=tk.LEFT)
+        self.set_damping_btn = tk.Button(control_frame, text="Уст. damping", command=self.set_damping)
+        self.set_damping_btn.pack(pady=2)
+        # -----------------------------------------------------------------
+
+        # --- ЭЛЕМЕНТЫ УПРАВЛЕНИЯ ДЛЯ СКОРОСТНОГО УПРАВЛЕНИЯ ---
+        speed_control_frame = tk.Frame(self.scrollable_frame, bg="#e0e0e0")
+        speed_control_frame.pack(pady=5, fill=tk.X)
+
+        tk.Label(speed_control_frame, text="Цель (скоростное):", bg="#e0e0e0").pack(anchor=tk.W)
         self.target_speed_entry = tk.Entry(speed_control_frame, width=10)
-        self.target_speed_entry.pack(side=tk.LEFT)
+        self.target_speed_entry.pack()
         self.target_speed_entry.insert(0, "0.0")
 
-        tk.Label(speed_control_frame, text="Max Speed:").pack(side=tk.LEFT)
+        tk.Label(speed_control_frame, text="Max Speed:", bg="#e0e0e0").pack(anchor=tk.W)
         self.max_speed_entry = tk.Entry(speed_control_frame, width=10)
-        self.max_speed_entry.pack(side=tk.LEFT)
+        self.max_speed_entry.pack()
         self.max_speed_entry.insert(0, "10.0")
 
-        tk.Label(speed_control_frame, text="Zone Width:").pack(side=tk.LEFT)
+        tk.Label(speed_control_frame, text="Zone Width:", bg="#e0e0e0").pack(anchor=tk.W)
         self.zone_width_entry = tk.Entry(speed_control_frame, width=10)
-        self.zone_width_entry.pack(side=tk.LEFT)
+        self.zone_width_entry.pack()
         self.zone_width_entry.insert(0, "50.0")
 
         self.set_speed_target_btn = tk.Button(speed_control_frame, text="Уст. скорость", command=self.set_speed_target_position)
-        self.set_speed_target_btn.pack(side=tk.LEFT)
+        self.set_speed_target_btn.pack(pady=2)
         # -----------------------------------------------------------------
+
+        # --- ЭЛЕМЕНТЫ УПРАВЛЕНИЯ ДЛЯ ВЯЗКОСТИ ---
+        damping_frame = tk.Frame(self.scrollable_frame, bg="#e0e0e0")
+        damping_frame.pack(pady=5, fill=tk.X)
+
+        tk.Label(damping_frame, text="Damping (std):", bg="#e0e0e0").pack(anchor=tk.W)
+        self.damping_std_entry = tk.Entry(damping_frame, width=10)
+        self.damping_std_entry.pack()
+        self.damping_std_entry.insert(0, str(self.sim.damping))
+
+        self.set_damping_std_btn = tk.Button(damping_frame, text="Уст. std", command=self.set_damping_std)
+        self.set_damping_std_btn.pack(pady=2)
+
+        tk.Label(damping_frame, text="Damping (imp):", bg="#e0e0e0").pack(anchor=tk.W)
+        self.damping_imp_entry = tk.Entry(damping_frame, width=10)
+        self.damping_imp_entry.pack()
+        self.damping_imp_entry.insert(0, str(self.sim.impedance_damping))
+
+        self.set_damping_imp_btn = tk.Button(damping_frame, text="Уст. imp", command=self.set_damping_imp)
+        self.set_damping_imp_btn.pack(pady=2)
+        # ------------------------------------
 
         # Привязка мыши
         self.profile_canvas.bind("<Button-1>", self.on_mouse_down)
@@ -417,6 +563,22 @@ class HapticGUI:
         except ValueError:
             print("Некорректное значение для скоростного управления")
 
+    # --- методы для установки вязкости ---
+    def set_damping_std(self):
+        try:
+            damping = float(self.damping_std_entry.get())
+            self.sim.set_damping(damping)
+        except ValueError:
+            print("Некорректное значение для damping (std)")
+
+    def set_damping_imp(self):
+        try:
+            damping = float(self.damping_imp_entry.get())
+            self.sim.set_impedance_damping(damping)
+        except ValueError:
+            print("Некорректное значение для damping (imp)")
+    # ------------------------------------
+
     def on_mouse_down(self, event):
         if abs(event.x - self.sim.state.x) <= 10:
             self.sim.state.dragging = True
@@ -435,7 +597,7 @@ class HapticGUI:
 
     def animate(self):
         F_haptic, F_ext = self.sim.step()
-        # --- НОВОЕ: получаем и добавляем силу привода ---
+        # --- получаем и добавляем силу привода ---
         F_target = self.sim._calculate_target_force() if self.sim.use_target_control else 0.0
         F_speed = self.sim._calculate_speed_control_force() if self.sim.use_speed_control else 0.0
         self.target_force_graph.add(F_target + F_speed)
@@ -446,6 +608,25 @@ class HapticGUI:
         self.decel_force_graph.add(friction_force)
         # -------------------------------------------------
 
+        # --- НОВОЕ: вычисляем и добавляем статическое и кинетическое трение ---
+        F_profile = self.sim.profile.force(self.sim.state.x)
+        if abs(F_profile) < self.sim.constant_force:
+            F_static = -F_profile
+            F_kinetic = 0.0
+        else:
+            F_static = 0.0
+            # Кинетическое: ±constant_force, против скорости
+            if self.sim.state.vx > 0:
+                F_kinetic = -self.sim.constant_force
+            elif self.sim.state.vx < 0:
+                F_kinetic = self.sim.constant_force
+            else:
+                F_kinetic = 0.0
+
+        self.static_friction_graph.add(F_static)
+        self.kinetic_friction_graph.add(F_kinetic)
+        # -------------------------------------------------
+
         self.velocity_graph.add(self.sim.state.vx)
         self.force_graph.add(F_haptic, F_ext)
         self.profile_graph.draw(self.sim, self.cursor_pos)
@@ -453,6 +634,8 @@ class HapticGUI:
         self.velocity_graph.draw()
         self.target_force_graph.draw()
         self.decel_force_graph.draw()
+        self.static_friction_graph.draw()  # <-- НОВОЕ: отрисовка
+        self.kinetic_friction_graph.draw()  # <-- НОВОЕ: отрисовка
         self.root.after(int(self.sim.dt * 1000), self.animate)
 
     def run(self):

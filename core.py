@@ -162,8 +162,18 @@ class HapticSimulation:
     def get_current_force(self):
         # Теперь включает силу от профиля и силу трения
         F_profile = self.profile.force(self.state.x)
-        F_friction = self._calculate_friction_force()
-        return F_profile + F_friction
+        # Для отображения: статическое трение к F_profile
+        if abs(F_profile) < self.constant_force:
+            F_friction_display = -F_profile
+        else:
+            # Кинетическое трение: зависит от скорости
+            if self.state.vx > 0:
+                F_friction_display = -self.constant_force
+            elif self.state.vx < 0:
+                F_friction_display = self.constant_force
+            else:
+                F_friction_display = 0.0
+        return F_profile + F_friction_display
 
     def set_constant_force(self, force):
         """Устанавливает силу сопротивления (например, трение)"""
@@ -308,6 +318,7 @@ class HapticSimulation:
         x_desired = self.target_x if self.target_x is not None else self.state.x
         
         F_haptic = self.profile.force(self.state.x)  # <-- Только профиль
+
         F_external_user = self._calculate_external_force()
 
         # --- УСЛОВНОЕ ВКЛЮЧЕНИЕ УПРАВЛЕНИЯ ---

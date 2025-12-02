@@ -18,7 +18,7 @@ if __name__ == "__main__":
     )
 
     # Установим постоянную силу (например, сопротивление движению)
-    sim.set_constant_force(2.0)
+    sim.set_constant_force(10)
 
     #Создаем профиль 
     profile = PiecewiseProfile()
