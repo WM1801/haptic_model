@@ -497,6 +497,24 @@ class HapticGUI:
         self.set_speed_target_btn.pack(pady=2)
         # -----------------------------------------------------------------
 
+        # --- ЭЛЕМЕНТЫ УПРАВЛЕНИЯ ДЛЯ ТРЕНИЯ ---
+        friction_frame = tk.Frame(self.scrollable_frame, bg="#e0e0e0")
+        friction_frame.pack(pady=5, fill=tk.X)
+
+        tk.Label(friction_frame, text="Static Friction:", bg="#e0e0e0").pack(anchor=tk.W)
+        self.static_friction_entry = tk.Entry(friction_frame, width=10)
+        self.static_friction_entry.pack()
+        self.static_friction_entry.insert(0, str(self.sim.static_friction_force))
+
+        tk.Label(friction_frame, text="Kinetic Friction:", bg="#e0e0e0").pack(anchor=tk.W)
+        self.kinetic_friction_entry = tk.Entry(friction_frame, width=10)
+        self.kinetic_friction_entry.pack()
+        self.kinetic_friction_entry.insert(0, str(self.sim.kinetic_friction_force))
+
+        self.set_friction_btn = tk.Button(friction_frame, text="Уст. трение", command=self.set_friction)
+        self.set_friction_btn.pack(pady=2)
+        # -----------------------------------------------------------------
+
         # --- ЭЛЕМЕНТЫ УПРАВЛЕНИЯ ДЛЯ ВЯЗКОСТИ ---
         damping_frame = tk.Frame(self.scrollable_frame, bg="#e0e0e0")
         damping_frame.pack(pady=5, fill=tk.X)
@@ -563,18 +581,28 @@ class HapticGUI:
         except ValueError:
             print("Некорректное значение для скоростного управления")
 
+    # --- методы для установки трения ---
+    def set_friction(self):
+        try:
+            static_force = float(self.static_friction_entry.get())
+            kinetic_force = float(self.kinetic_friction_entry.get())
+            self.sim.set_friction_forces(static_force, kinetic_force)
+        except ValueError:
+            print("Некорректное значение для трения")
+    # ------------------------------------
+
     # --- методы для установки вязкости ---
     def set_damping_std(self):
         try:
             damping = float(self.damping_std_entry.get())
-            self.sim.set_damping(damping)
+            self.sim.damping = damping
         except ValueError:
             print("Некорректное значение для damping (std)")
 
     def set_damping_imp(self):
         try:
             damping = float(self.damping_imp_entry.get())
-            self.sim.set_impedance_damping(damping)
+            self.sim.impedance_damping = damping
         except ValueError:
             print("Некорректное значение для damping (imp)")
     # ------------------------------------
@@ -609,22 +637,39 @@ class HapticGUI:
         # -------------------------------------------------
 
         # --- НОВОЕ: вычисляем и добавляем статическое и кинетическое трение ---
-        F_profile = self.sim.profile.force(self.sim.state.x)
-        if abs(F_profile) < self.sim.constant_force:
-            F_static = -F_profile
-            F_kinetic = 0.0
-        else:
-            F_static = 0.0
-            # Кинетическое: ±constant_force, против скорости
-            if self.sim.state.vx > 0:
-                F_kinetic = -self.sim.constant_force
-            elif self.sim.state.vx < 0:
-                F_kinetic = self.sim.constant_force
+        # Т.к. теперь в core логика трения уточнена, мы можем определить, какое трение "действует" в текущий момент.
+        # Это не всегда F_static и F_kinetic отдельно. В `_calculate_friction_force` возвращается результирующая.
+        # Для графиков трения будем отслеживать, движется ли объект.
+        if abs(self.sim.state.vx) < self.sim.vx_threshold:
+            # Объект "стоит". Статическое трение "поглощает" движущую силу.
+            # В `_calculate_friction_force` возвращается 0, но для графиков мы можем отобразить потенциальную силу.
+            # Т.к. в `_calculate_friction_force` мы не знаем F_move, то отображаем 0 для статического, если объект стоит.
+            # Но мы можем отслеживать, если сила профиля + внешняя < static_friction, то считаем, что действует статическое.
+            F_move = F_haptic + F_ext
+            if abs(F_move) < self.sim.static_friction_force:
+                F_static_display = -F_move  # Противодействует F_move
+                F_kinetic_display = 0.0
             else:
-                F_kinetic = 0.0
+                # Если F_move > static_friction, то объект "пытается" или уже движется.
+                # В `_calculate_friction_force` будет кинетическое.
+                # Но для графика мы можем отобразить кинетическое как +/- kinetic_friction_force.
+                if self.sim.state.vx > 0:
+                    F_kinetic_display = -self.sim.kinetic_friction_force
+                elif self.sim.state.vx < 0:
+                    F_kinetic_display = self.sim.kinetic_friction_force
+                else: # vx == 0, но F_move > static
+                    # Это переходное состояние. Пусть будет 0, если vx == 0.
+                    F_kinetic_display = 0.0
+                F_static_display = 0.0
+        else: # Объект движется
+            if self.sim.state.vx > 0:
+                F_kinetic_display = -self.sim.kinetic_friction_force
+            else: # vx < 0
+                F_kinetic_display = self.sim.kinetic_friction_force
+            F_static_display = 0.0
 
-        self.static_friction_graph.add(F_static)
-        self.kinetic_friction_graph.add(F_kinetic)
+        self.static_friction_graph.add(F_static_display)
+        self.kinetic_friction_graph.add(F_kinetic_display)
         # -------------------------------------------------
 
         self.velocity_graph.add(self.sim.state.vx)
