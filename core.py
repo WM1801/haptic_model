@@ -1,4 +1,4 @@
-#core.py
+# core.py
 # -------------------------------------------------
 # ЧИСТАЯ МОДЕЛЬ: никаких импортов GUI, только логика
 # -------------------------------------------------
@@ -22,18 +22,31 @@ def smoothstep(a, b, x):
     return t * t * (3 - 2 * t)
 
 #библиотека функций 
-def constant(x, b=0.0):
+#библиотека функций 
+def constant(x, b=0.0, x_start=float('-inf'), x_end=float('inf'), f_stat=0.0, f_din=0.0):
+    # Добавлены x_start, x_end для определения области действия трения
+    # f_stat, f_din добавлены для передачи в PiecewiseProfile
+    if x < x_start or x > x_end:
+        return 0.0
     return b
 
-def linear(x, a=0.0, b=0.0):
+def linear(x, a=0.0, b=0.0, x_start=float('-inf'), x_end=float('inf'), f_stat=0.0, f_din=0.0):
+    # Добавлены x_start, x_end для определения области действия трения
+    # f_stat, f_din добавлены для передачи в PiecewiseProfile
+    if x < x_start or x > x_end:
+        return 0.0
     return a * x + b
 
-def trapezoid(x, x0=0.0, height=1.0, base_a=10.0, base_b=2.0, is_pit=False):
+def trapezoid(x, x0=0.0, height=1.0, base_a=10.0, base_b=2.0, is_pit=False, f_stat=0.0, f_din=0.0, f_stat_base=None, f_din_base=None):
     """
     x0 - центр трапеции
     height - высота трапеции (или глубина, если is_pit = True)
     base_a - размер оснований (плоская часть) 
     base_b - длинна склонов (суммарно по 2)
+    f_stat - сила статического трения для всей области трапеции (или склонов, если заданы *_base)
+    f_din - сила кинетического трения для всей области трапеции (или склонов, если заданы *_base)
+    f_stat_base - сила статического трения *только* для плоской части (base_a). Если None, используется f_stat.
+    f_din_base - сила кинетического трения *только* для плоской части (base_a). Если None, используется f_din.
     """
     half_a = base_a / 2
     half_b = base_b / 2
@@ -51,21 +64,24 @@ def trapezoid(x, x0=0.0, height=1.0, base_a=10.0, base_b=2.0, is_pit=False):
     return -u_val if is_pit else u_val
 
 
-def semicircle(x, x0=0.0, radius=5.0, is_pit=False):   
+def semicircle(x, x0=0.0, radius=5.0, is_pit=False, f_stat=0.0, f_din=0.0):   
     """
     x0 - центр окружности
     radius - радиус
+    f_stat - сила статического трения для области полукруга
+    f_din - сила кинетического трения для области полукруга
     """
     if abs(x - x0) > radius:
         return 0.0
     y = math.sqrt(radius ** 2 - (x - x0) ** 2)
     return -y if is_pit else y
 
-
-def sine_wave_sum(x, components=None): 
+# sine_wave_sum также можно обновить, если планируется использовать её с трением
+def sine_wave_sum(x, components=None, x_start=float('-inf'), x_end=float('inf'), f_stat=0.0, f_din=0.0): 
     """
     components: список словарей с ключами: 'amplitude', 'frequency', 'phase'
     Пример: [{'amplitude': 1.0, 'frequency': 0.1, 'phase': 0}, ...]
+    f_stat, f_din - силы трения для области, где действует функция (требуется указать x_start, x_end)
     """
     if components is None:
         components = []
@@ -109,6 +125,98 @@ class PiecewiseProfile:
         dU = (self.potential(x + dx) - self.potential(x - dx)) / (2 * dx)
         return -dU
     
+    def get_local_friction(self, x):
+        """
+        Возвращает локальные параметры трения (static, kinetic) для позиции x.
+        Если x не попадает ни в один элемент с трением, возвращает (None, None).
+        """
+        # Проходим по функциям в обратном порядке, чтобы при пересечении
+        # приоритет отдавался последней добавленной (если так задумано)
+        for f in reversed(self.functions):
+            func = f['func']
+            params = f['params']
+
+            # Проверяем, активен ли элемент и есть ли у него параметры трения
+            friction_static = params.get('f_stat', 0.0)
+            friction_kinetic = params.get('f_din', 0.0)
+
+            # Проверяем, находится ли x внутри "активной" зоны функции
+            is_inside = False
+            # --- Проверка для constant ---
+            if func.__name__ == 'constant':
+                x_start = params.get('x_start', float('-inf'))
+                x_end = params.get('x_end', float('inf'))
+                if x_start <= x <= x_end and (friction_static > 0 or friction_kinetic > 0):
+                    is_inside = True
+
+            # --- Проверка для linear ---
+            elif func.__name__ == 'linear':
+                x_start = params.get('x_start', float('-inf'))
+                x_end = params.get('x_end', float('inf'))
+                if x_start <= x <= x_end and (friction_static > 0 or friction_kinetic > 0):
+                    is_inside = True
+
+            # --- Проверка для trapezoid ---
+            elif func.__name__ == 'trapezoid' and (friction_static > 0 or friction_kinetic > 0):
+                x0 = params['x0']
+                base_a = params.get('base_a', 10.0)
+                base_b = params.get('base_b', 2.0)
+                half_a = base_a / 2
+                half_b = base_b / 2
+                start_slope = x0 - half_a - half_b
+                end_slope = x0 + half_a + half_b
+                # Проверяем, внутри ли x области трапеции
+                if start_slope <= x <= end_slope:
+                    # Тогда возвращаем либо f_stat, f_din (для плоской части и склонов),
+                    # либо f_stat_base, f_din_base (только для плоской части).
+                    # f_stat_base, f_din_base - для плоской части (base_a).
+                    # f_stat, f_din - для "всего" элемента трапеции.
+                    # Проверим, на плоской ли части мы:
+                    start_flat = x0 - half_a
+                    end_flat = x0 + half_a
+                    if start_flat <= x <= end_flat:
+                        # Используем f_stat_base, f_din_base, если они заданы, иначе f_stat, f_din
+                        fs = params.get('f_stat_base', friction_static)
+                        fd = params.get('f_din_base', friction_kinetic)
+                    else:
+                        # Используем f_stat, f_din для склонов
+                        fs = friction_static
+                        fd = friction_kinetic
+                    return fs, fd # НАХОДИТСЯ ВНУТРИ БЛОКА elif func.__name__ == 'trapezoid'
+                # Если x не внутри трапеции, is_inside останется False для этой функции
+
+            # --- Проверка для semicircle ---
+            elif func.__name__ == 'semicircle' and (friction_static > 0 or friction_kinetic > 0):
+                x0 = params['x0']
+                radius = params['radius']
+                # Проверяем, внутри ли x области полукруга
+                if abs(x - x0) <= radius:
+                    is_inside = True
+
+            # --- Проверка для sine_wave_sum ---
+            # elif func.__name__ == 'sine_wave_sum' and (friction_static > 0 or friction_kinetic > 0):
+                # Предположим, что sine_wave_sum имеет трение везде, где определена (или задайте диапазон)
+                # Для простоты, считаем, что если f_stat или f_din заданы, она "активна" везде
+                # Или добавьте x_start, x_end в sine_wave_sum
+                # Пока просто проверим, есть ли трение
+                # Чтобы было точно, лучше добавить x_start, x_end к sine_wave_sum
+                # x_start_sine = params.get('x_start', float('-inf'))
+                # x_end_sine = params.get('x_end', float('inf'))
+                # if x_start_sine <= x <= x_end_sine and (friction_static > 0 or friction_kinetic > 0):
+                #    is_inside = True
+                # Пока примем, что если трение задано, но диапазон не указан, оно не применяется
+                # или применяется "везде", что может быть нежелательно.
+                # Лучше добавить x_start, x_end к sine_wave_sum в её определении.
+                # Пока оставим как есть, если не задан диапазон, трение не применяется.
+                # Пока не реализуем, если нет явного диапазона.
+
+            if is_inside and (friction_static > 0 or friction_kinetic > 0):
+                return friction_static, friction_kinetic
+
+        # Если не попал ни в один элемент с трением, возвращаем глобальные значения или (0, 0)
+        # Возвращаем (None, None), чтобы вызывающий код мог понять, что нужно использовать глобальные.
+        return None, None
+
 
 class HapticSimulation:
     """Главный симулятор — чистая физика, без GUI"""
@@ -169,7 +277,7 @@ class HapticSimulation:
     def get_user_feel_force(self):
         # Сила, которую ощущает пользователь: профиль + трение
         F_profile = self.profile.force(self.state.x)
-        F_friction = self._calculate_friction_force()
+        F_friction = self._calculate_friction_force() # Использует локальное трение внутри
         # Для отображения: суммируем силу профиля и трение
         # Важно: это не сила, действующая на объект, а сила, которую "ощущает" пользователь
         return F_profile + F_friction
@@ -272,28 +380,87 @@ class HapticSimulation:
 
         return speed_force
 
-    # ---  сухое трение зависит от скорости и порога ---
+    # ---  сухое трение зависит от скорости, порога и локального профиля ---
     def _calculate_friction_force(self):
         """
         Возвращает силу сухого трения, противоположно направленную скорости.
-        Если объект не движется (|vx| < threshold), возвращаем статическое трение.
-        Если движется, возвращаем кинетическое трение, противоположное направлению скорости.
+        Использует локальные параметры трения из профиля, если они заданы для текущей позиции.
+        Иначе использует глобальные параметры.
         """
+        # Получаем локальные параметры трения
+        local_static, local_kinetic = self.profile.get_local_friction(self.state.x)
+
+        # Выбираем параметры: локальные или глобальные
+        f_static_to_use = local_static if local_static is not None else self.static_friction_force
+        f_kinetic_to_use = local_kinetic if local_kinetic is not None else self.kinetic_friction_force
+
+        # --- сухое трение зависит от скорости и порога, используя выбранные параметры ---
         if abs(self.state.vx) < self.vx_threshold:
-            # Объект "стоит". Трение = -F_move, если |F_move| < static_friction
-            # В этой функции мы не знаем F_move, но в симуляции оно будет учитываться.
-            # Поэтому возвращаем 0, так как статическое трение "поглощает" движущую силу.
+            # Объект "стоит". В этой функции мы не знаем F_move, но в симуляции оно будет учитываться.
+            # Поэтому возвращаем 0, если |F_move| < f_static_to_use, иначе - не 0 (это обрабатывается в step)
+            # Для возврата силы трения как таковой, когда объект "стоит", возвращаем 0.
+            # Реальное влияние статического трения обрабатывается в step.
+            # Этот метод возвращает *кинетическое* трение, если объект движется, или 0, если стоит.
             return 0.0
         else:
             # Объект движется. Кинетическое трение против скорости.
             if self.state.vx > 0:
-                return -self.kinetic_friction_force
+                return -f_kinetic_to_use
             elif self.state.vx < 0:
-                return self.kinetic_friction_force
-            else:
-                return 0.0  # vx == 0
+                return f_kinetic_to_use
+            else: # vx == 0
+                return 0.0
+        # ---------------------------------------------------------
 
+
+    # --- НОВЫЙ МЕТОД: расчёт движущей силы с учётом локального трения ---
+    def _calculate_moving_force_with_friction(self, F_move):
+        """
+        Принимает движущую силу F_move (F_profile + F_external_user).
+        Возвращает результирующую силу после применения локального трения.
+        """
+        # Получаем локальные параметры трения
+        local_static, local_kinetic = self.profile.get_local_friction(self.state.x)
+        f_static_to_use = local_static if local_static is not None else self.static_friction_force
+        f_kinetic_to_use = local_kinetic if local_kinetic is not None else self.kinetic_friction_force
+
+        # --- Применение (локального) трения к движущей силе ---
+        if abs(self.state.vx) < self.vx_threshold:
+            # Объект "стоит"
+            if abs(F_move) < f_static_to_use:
+                # Сила недостаточна для страгивания. Трение компенсирует F_move.
+                # Результирующая сила на движение = 0.
+                F_move_and_frict = 0.0
+            else:
+                # Сила достаточна для страгивания. Применяем кинетическое трение.
+                # Направление кинетического трения против *текущей* скорости (даже если она близка к 0).
+                # Если vx = 0, направление кинетического трения определяется направлением F_move.
+                if self.state.vx > 0:
+                    friction_force = -f_kinetic_to_use
+                elif self.state.vx < 0:
+                    friction_force = f_kinetic_to_use
+                else: # vx == 0
+                    # Направление кинетического трения, когда vx=0, определяется направлением силы, вызывающей движение.
+                    # F_move вызывает движение. Если F_move > 0, кинетическое трение = -f_kinetic_to_use.
+                    # Если F_move < 0, кинетическое трение = +f_kinetic_to_use.
+                    if F_move > 0:
+                        friction_force = -f_kinetic_to_use
+                    elif F_move < 0:
+                        friction_force = f_kinetic_to_use
+                    else: # F_move == 0, но это не должно было сюда попасть (F_move >= f_static_to_use, f_static > 0)
+                         friction_force = 0.0 # На всякий случай
+                F_move_and_frict = F_move + friction_force
+        else:
+            # Объект движется. Кинетическое трение против текущей скорости.
+            if self.state.vx > 0:
+                friction_force = -f_kinetic_to_use
+            else: # self.state.vx < 0 (так как else от abs(vx) < threshold)
+                friction_force = f_kinetic_to_use
+            F_move_and_frict = F_move + friction_force
+        # ---------------------------------------------------------
+        return F_move_and_frict
     # ---------------------------------------------------------
+
 
     def _calculate_acceleration(self, F_total):
         """Вычисляет ускорение из суммарной силы"""
@@ -334,14 +501,8 @@ class HapticSimulation:
         F_move = F_haptic + F_external_user
         F_control = F_target + F_speed
 
-        # --- Применение трения к движущей силе ---
-        friction_force = self._calculate_friction_force()
-
-        # Если |F_move| < static_friction, движение не начинается, F_move_and_frict = 0
-        if abs(self.state.vx) < self.vx_threshold and abs(F_move) < self.static_friction_force:
-            F_move_and_frict = 0.0
-        else:
-            F_move_and_frict = F_move + friction_force
+        # --- Применение (локального) трения к движущей силе ---
+        F_move_and_frict = self._calculate_moving_force_with_friction(F_move)
 
         # Полная внешняя сила для Impedance Control
         F_total_applied = F_move_and_frict + F_control
@@ -399,17 +560,9 @@ class HapticSimulation:
             F_move = F_haptic + external
             F_control = F_target + F_speed
 
-            # --- Применение трения к движущей силе ---
-            friction_force = self._calculate_friction_force()
-
-            # Если |F_move| < static_friction и объект не движется, F_move_and_frict = 0
-            if abs(self.state.vx) < self.vx_threshold and abs(F_move) < self.static_friction_force:
-                F_move_and_frict = 0.0
-            else:
-                # Объект движется ИЛИ F_move >= static_friction. В обоих случаях суммируем силы.
-                # friction_force уже рассчитана как кинетическое трение, против скорости, если движется.
-                F_move_and_frict = F_move + friction_force
-
+            # --- Применение (локального) трения к движущей силе ---
+            F_move_and_frict = self._calculate_moving_force_with_friction(F_move)
+            
             # Суммируем движущую и управляющую силы
             F_total = F_move_and_frict + F_control
             

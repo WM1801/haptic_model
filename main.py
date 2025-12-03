@@ -24,9 +24,10 @@ if __name__ == "__main__":
     #Создаем профиль 
     profile = PiecewiseProfile()
     # Пример: добавим трапецию и синусоиду
-    profile.add_function(constant, b=0.0, override=False)
+    profile.add_function(linear, a= -2, b=160.0, x_start = 0, x_end = 80, f_stat = 0.01, f_din = 0.01)
+    profile.add_function(constant, b=0.0, x_start = 150, x_end = 250, f_stat = 15, f_din = 13)
     profile.add_function(semicircle, x0=100, radius=10, is_pit=False, override=True)
-    profile.add_function(trapezoid, x0=300, height=200, base_a=100, base_b=100, is_pit=False, override=False)
+    profile.add_function(trapezoid, x0=300, height=200, base_a=100, base_b=100, is_pit=False, override=False, f_stat = 0.01, f_din = 0.01, f_stat_base = 50, f_din_base = 45)
     #profile.add_function(sine_wave_sum, components=[
     #    {'amplitude': 1.0, 'frequency': 0.2, 'phase': 0},
     #    {'amplitude': 0.5, 'frequency': 0.5, 'phase': math.pi / 4}
